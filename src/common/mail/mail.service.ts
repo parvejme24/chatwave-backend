@@ -112,6 +112,29 @@ export class MailService {
     }
   }
 
+  async sendMissedCall(email: string, name: string, label: string): Promise<void> {
+    const subject = `Missed ChatWave call`;
+    const text = [`Hi ${name},`, `You missed a ${label} while you were away.`, 'Open ChatWave to call them back.'].join('\n');
+    const html = `
+      <p>Hi ${name},</p>
+      <p>You missed a ${label} while you were away.</p>
+      <p>Open ChatWave to call them back.</p>
+    `;
+    await this.dispatch(email, subject, text, html, `Missed-call notice for ${email}`);
+  }
+
+  async sendUnreadDigest(email: string, name: string, count: number, preview: string): Promise<void> {
+    const subject = `You have ${count} unread ChatWave ${count === 1 ? 'message' : 'messages'}`;
+    const snippet = preview.trim() ? preview.trim() : 'Open ChatWave to catch up.';
+    const text = [`Hi ${name},`, `You have ${count} unread ${count === 1 ? 'message' : 'messages'}.`, snippet].join('\n');
+    const html = `
+      <p>Hi ${name},</p>
+      <p>You have ${count} unread ${count === 1 ? 'message' : 'messages'}.</p>
+      <p>${snippet}</p>
+    `;
+    await this.dispatch(email, subject, text, html, `Unread digest for ${email}`);
+  }
+
   async sendConfirmDeleteAccount(email: string, url: string): Promise<void> {
     const subject = 'Confirm your ChatWave account deletion';
     const text = [
@@ -149,6 +172,26 @@ export class MailService {
       if (this.isDev) {
         const message = error instanceof Error ? error.message : 'send failed';
         this.logger.warn(`SMTP send failed (${message}). Delete-account link for ${email}: ${url}`);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async dispatch(email: string, subject: string, text: string, html: string, fallback: string): Promise<void> {
+    if (!this.transporter) {
+      if (this.isDev) {
+        this.logger.warn(`SMTP is not configured. ${fallback}`);
+        return;
+      }
+      throw new Error('Email is not configured');
+    }
+    try {
+      await this.transporter.sendMail({ from: this.from, to: email, subject, text, html });
+    } catch (error) {
+      if (this.isDev) {
+        const message = error instanceof Error ? error.message : 'send failed';
+        this.logger.warn(`SMTP send failed (${message}). ${fallback}`);
         return;
       }
       throw error;

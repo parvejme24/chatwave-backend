@@ -270,6 +270,30 @@ export class RedisService implements OnModuleDestroy {
     return raw ? Number(raw) : 0;
   }
 
+  async bumpUnreadDigest(userId: string, preview: string): Promise<void> {
+    await this.client
+      .multi()
+      .incr(`digest:${userId}`)
+      .set(`digest:${userId}:preview`, preview)
+      .sadd('digest:pending', userId)
+      .exec();
+  }
+
+  async pendingDigestUserIds(): Promise<string[]> {
+    return this.client.smembers('digest:pending');
+  }
+
+  async takeUnreadDigest(userId: string): Promise<{ count: number; preview: string } | null> {
+    const [countRaw, preview] = await Promise.all([
+      this.client.get(`digest:${userId}`),
+      this.client.get(`digest:${userId}:preview`),
+    ]);
+    const count = Number(countRaw ?? 0);
+    await this.client.multi().del(`digest:${userId}`).del(`digest:${userId}:preview`).srem('digest:pending', userId).exec();
+    if (!Number.isFinite(count) || count <= 0) return null;
+    return { count, preview: preview ?? '' };
+  }
+
   async setTyping(conversationId: string, userId: string): Promise<void> {
     await this.client.set(`typing:${conversationId}:${userId}`, '1', 'EX', 3);
   }

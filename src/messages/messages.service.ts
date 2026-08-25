@@ -10,6 +10,8 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
 import { BlocksService } from '../blocks/blocks.service';
 import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { RedisService } from '../common/redis/redis.service';
@@ -33,6 +35,7 @@ import {
   type ReceiptStatus,
   type UploadedChatFile,
 } from './messages.constants';
+import { EVENT_MESSAGE_CREATED } from '../notifications/notifications.constants';
 import { SendMessageDto } from './messages.dto';
 import { Message, MessageDocument } from './message.schema';
 
@@ -47,6 +50,7 @@ export class MessagesService {
     private readonly cloudinary: CloudinaryService,
     private readonly redis: RedisService,
     @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   bindPublisher(publisher: RealtimePublisher) {
@@ -337,6 +341,18 @@ export class MessagesService {
         unread: this.conversations.unreadOf(live, userId),
       })),
     );
+    this.events?.emit(EVENT_MESSAGE_CREATED, {
+      senderId: viewer.id,
+      conversation: {
+        id: conversationKey,
+        type: live.type,
+        name: live.name ?? '',
+        members: live.members,
+      },
+      message: { id: row.id, type: row.type, text: row.text, caption: row.caption },
+      preview,
+      actorName: user.name,
+    });
     return toViewerDto(message, viewer.id);
   }
 

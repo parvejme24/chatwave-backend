@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, session list/revoke, Settings, and Admin (owner tools) are implemented.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, session list/revoke, Settings, Admin (owner tools), and Notifications are implemented.
 
 ## Setup
 
@@ -227,6 +227,24 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/admin/users/USER_ID/unb
 curl -s -b cookies.txt -X DELETE http://localhost:5000/api/admin/users/USER_ID
 ```
 
+## Notifications examples
+
+In-app rows for messages, incoming/missed calls, and being added to a group. `messageNotifications: false` and muted chats skip the row (unread on the conversation still updates). Missed-call email only if the person has been offline at least 30 minutes. `unreadDigest` queues one hourly summary email instead of per-message mail (v1 has no per-message SMTP).
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/notifications
+
+curl -s -b cookies.txt 'http://localhost:5000/api/notifications?unreadOnly=true&limit=30'
+
+curl -s -b cookies.txt http://localhost:5000/api/notifications/unread-count
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/notifications/read \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/notifications/NOTIFICATION_ID/read
+```
+
 ## Conversations examples
 
 List chats (chips: `all`, `unread`, `groups`, `archived`; `calls` returns `[]` until Calls exist):
@@ -408,6 +426,8 @@ socket.on("message:new", handler)
 | | | `conversation:removed` | `{ conversationId }` to the leaver / kicked user’s `user:{id}` (drop from the sidebar) |
 | | | `user:blocked` | `{ userId }` to both `user:{id}` rooms after a block |
 | | | `auth:banned` | `{ error }` on `user:{id}` before the owner-ban disconnect |
+| | | `notification:new` | `{ notification }` NotificationDto on `user:{id}` after insert |
+| | | `notification:badge` | `{ unreadCount }` on `user:{id}` |
 | `call:join` | `{ callId }` | `call:incoming` | `{ call }` CallDto to each callee’s `user:{id}` |
 | `call:leave` | `{ callId }` | `call:accepted` | `{ callId, userId }` |
 | `webrtc:offer` | `{ callId, toUserId, sdp }` | `webrtc:offer` | forwarded to `user:{toUserId}` (SDP not stored) |

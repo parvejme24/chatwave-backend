@@ -127,6 +127,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, Re
     for (const socket of sockets) socket.disconnect(true);
   }
 
+  emitNotification(userId: string, notification: unknown) {
+    this.server?.to(room('user', userId)).emit('notification:new', { notification });
+  }
+
+  emitBadge(userId: string, unreadCount: number) {
+    this.server?.to(room('user', userId)).emit('notification:badge', { unreadCount });
+  }
+
+  async isInConversation(userId: string, conversationId: string) {
+    if (!this.server || !conversationId) return false;
+    const sockets = await this.server.in(room('conversation', conversationId)).fetchSockets();
+    return sockets.some((socket) => (socket.data as { userId?: string } | undefined)?.userId === userId);
+  }
+
   @SubscribeMessage('conversation:join')
   async join(@ConnectedSocket() socket: ChatSocket, @MessageBody() body: unknown) {
     const conversationId = chatId(body);

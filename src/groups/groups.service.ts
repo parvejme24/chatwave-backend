@@ -1,10 +1,13 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional, forwardRef } from '@nestjs/common';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
 import { BlocksService } from '../blocks/blocks.service';
 import { ConversationDocument } from '../conversations/conversation.schema';
 import { ConversationsService } from '../conversations/conversations.service';
 import { ChatGateway } from '../messages/messages.gateway';
 import { MessagesService } from '../messages/messages.service';
+import { EVENT_GROUP_MEMBER_ADDED } from '../notifications/notifications.constants';
 import type { AuthViewer } from '../users/users.constants';
 import { UsersService } from '../users/users.service';
 import { ADMIN_ACTION_ERROR, ADMIN_REMOVE_ERROR, LAST_ADMIN_ERROR, LEAVE_INSTEAD } from './groups.constants';
@@ -17,6 +20,7 @@ export class GroupsService {
     private readonly messages: MessagesService,
     private readonly realtime: ChatGateway,
     @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   async listMembers(viewer: AuthViewer, id: string) {
@@ -49,6 +53,14 @@ export class GroupsService {
         unread: detail.unread,
       });
     }
+    const actor = await this.users.findById(viewer.id);
+    this.events?.emit(EVENT_GROUP_MEMBER_ADDED, {
+      conversationId: live.id,
+      groupName: live.name || 'a group',
+      actorId: viewer.id,
+      actorName: actor?.name ?? 'Someone',
+      userIds: added,
+    });
     return { created: true, conversation: await this.conversations.toDetail(viewer, live) };
   }
 

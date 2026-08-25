@@ -1,6 +1,8 @@
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
@@ -19,6 +21,7 @@ import { ContactsModule } from './contacts/contacts.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SettingsModule } from './settings/settings.module';
 import { AdminModule } from './admin/admin.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -26,6 +29,8 @@ import { AdminModule } from './admin/admin.module';
       isGlobal: true,
       validate: validateEnv,
     }),
+    EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     MongooseModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppEnv, true>) => ({
@@ -46,6 +51,7 @@ import { AdminModule } from './admin/admin.module';
     SessionsModule,
     SettingsModule,
     AdminModule,
+    NotificationsModule,
     AuthModule,
   ],
   controllers: [AppController],

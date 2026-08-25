@@ -10,6 +10,7 @@ import {
   Optional,
   forwardRef,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -21,6 +22,7 @@ import { ConversationDocument } from '../conversations/conversation.schema';
 import { ConversationsService } from '../conversations/conversations.service';
 import { isMongoId } from '../messages/messages.constants';
 import { MessagesService } from '../messages/messages.service';
+import { EVENT_CALL_INCOMING, EVENT_CALL_MISSED } from '../notifications/notifications.constants';
 import type { AuthViewer } from '../users/users.constants';
 import { UsersService } from '../users/users.service';
 import { Call, CallDocument } from './call.schema';
@@ -56,6 +58,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService<AppEnv, true>,
     private readonly realtime: CallsRealtime,
     @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   onModuleInit() {
@@ -109,6 +112,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     });
     for (const id of callees) this.realtime.emitIncoming(id, await this.toDto({ id, isOwner: false }, row, conversation));
     this.realtime.emitStarted(conversation.id, row.id);
+    const me = await this.users.findById(viewer.id);
+    this.events?.emit(EVENT_CALL_INCOMING, {
+      callId: row.id,
+      conversationId: conversation.id,
+      actorId: viewer.id,
+      actorName: me?.name ?? 'ChatWave user',
+      type,
+      recipientIds: callees,
+      href: callHref(type, me?.name ?? 'ChatWave', { callId: row.id, conversationId: conversation.id }),
+      label: callLabel(type),
+    });
     return { call: await this.toDto(viewer, row, conversation) };
   }
 
@@ -259,6 +273,21 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       durationSec: row.durationSec,
     });
     if (missed) this.realtime.emitMissed(ids(row), { callId: row.id });
+    if (missed) {
+      const actorId = String(row.initiatedBy);
+      const actor = await this.users.findById(actorId);
+      const recipients = ids(row).filter((id) => id !== actorId);
+      this.events?.emit(EVENT_CALL_MISSED, {
+        callId: row.id,
+        conversationId: String(row.conversation),
+        actorId,
+        actorName: actor?.name ?? 'ChatWave user',
+        type: row.type,
+        recipientIds: recipients,
+        href: callHref(asType(row.type), actor?.name ?? 'ChatWave', { callId: row.id, conversationId: String(row.conversation) }),
+        label,
+      });
+    }
     if (row.status === 'declined' && input.endedBy) {
       this.realtime.emitDeclined(String(row.conversation), ids(row), { callId: row.id, userId: input.endedBy });
     }
