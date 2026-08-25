@@ -18,6 +18,7 @@ import { BlocksModule } from './blocks/blocks.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SettingsModule } from './settings/settings.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { SettingsModule } from './settings/settings.module';
     BlocksModule,
     SessionsModule,
     SettingsModule,
+    AdminModule,
     AuthModule,
   ],
   controllers: [AppController],

@@ -77,6 +77,7 @@ describe('AuthService', () => {
     findActiveById: jest.fn(),
   };
   const redis = {
+    getSession: jest.fn().mockResolvedValue({ city: '', browser: 'ChatWave', platform: 'web' }),
     createSession: jest.fn().mockResolvedValue('session-1'),
     deleteAllSessions: jest.fn().mockResolvedValue(undefined),
     deleteSession: jest.fn().mockResolvedValue(undefined),

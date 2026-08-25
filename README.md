@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, session list/revoke, and Settings are implemented.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, session list/revoke, Settings, and Admin (owner tools) are implemented.
 
 ## Setup
 
@@ -209,6 +209,24 @@ curl -s -X POST http://localhost:5000/api/settings/delete-account/confirm \
   -d '{"token":"TOKEN"}'
 ```
 
+## Admin examples
+
+Owner-only tools for other accounts (`isOwner` required). Non-owners get 403 `This area is only for the owner.` You cannot ban, unban, or delete the owner.
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/admin/users
+
+curl -s -b cookies.txt 'http://localhost:5000/api/admin/users?q=nadia&status=all'
+
+curl -s -b cookies.txt http://localhost:5000/api/admin/users/USER_ID
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/admin/users/USER_ID/ban
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/admin/users/USER_ID/unban
+
+curl -s -b cookies.txt -X DELETE http://localhost:5000/api/admin/users/USER_ID
+```
+
 ## Conversations examples
 
 List chats (chips: `all`, `unread`, `groups`, `archived`; `calls` returns `[]` until Calls exist):
@@ -389,6 +407,7 @@ socket.on("message:new", handler)
 | | | `group:member-left` | `{ conversationId, userId, reason: "left" \| "removed" }` |
 | | | `conversation:removed` | `{ conversationId }` to the leaver / kicked user’s `user:{id}` (drop from the sidebar) |
 | | | `user:blocked` | `{ userId }` to both `user:{id}` rooms after a block |
+| | | `auth:banned` | `{ error }` on `user:{id}` before the owner-ban disconnect |
 | `call:join` | `{ callId }` | `call:incoming` | `{ call }` CallDto to each callee’s `user:{id}` |
 | `call:leave` | `{ callId }` | `call:accepted` | `{ callId, userId }` |
 | `webrtc:offer` | `{ callId, toUserId, sdp }` | `webrtc:offer` | forwarded to `user:{toUserId}` (SDP not stored) |

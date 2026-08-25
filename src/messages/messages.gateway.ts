@@ -120,6 +120,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, Re
     this.server.to(room('user', blockedId)).emit('user:blocked', { userId: blockerId });
   }
 
+  async kickBanned(userId: string) {
+    if (!this.server) return;
+    this.server.to(room('user', userId)).emit('auth:banned', { error: 'This account has been banned' });
+    const sockets = await this.server.in(room('user', userId)).fetchSockets();
+    for (const socket of sockets) socket.disconnect(true);
+  }
+
   @SubscribeMessage('conversation:join')
   async join(@ConnectedSocket() socket: ChatSocket, @MessageBody() body: unknown) {
     const conversationId = chatId(body);

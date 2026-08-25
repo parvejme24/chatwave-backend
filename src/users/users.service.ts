@@ -238,6 +238,30 @@ export class UsersService {
     return this.users.findByIdAndUpdate(userId, { deletedAt: new Date(), status: 'banned', presence: 'offline' }).exec();
   }
 
+  async banAccount(userId: string) {
+    await this.goOffline(userId);
+    return this.users.findByIdAndUpdate(userId, { status: 'banned', presence: 'offline' }, { new: true }).exec();
+  }
+
+  async unbanAccount(userId: string) {
+    return this.users.findByIdAndUpdate(userId, { status: 'active' }, { new: true }).exec();
+  }
+
+  async adminDelete(userId: string) {
+    const user = await this.users.findById(userId).exec();
+    if (!user) return null;
+    if (user.deletedAt) return user;
+    await this.goOffline(userId);
+    user.deletedAt = new Date();
+    user.status = 'banned';
+    user.presence = 'offline';
+    if (!user.email.startsWith('deleted_')) {
+      user.email = `deleted_${user.id}_${user.email}`;
+    }
+    await user.save();
+    return user;
+  }
+
   async applyOAuth(
     user: UserDocument,
     profile: { provider: 'google' | 'github'; providerId: string; photoUrl?: string | null },

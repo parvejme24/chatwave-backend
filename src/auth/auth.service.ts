@@ -8,11 +8,13 @@ import {
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcrypt';
 import type { CookieOptions, Request, Response } from 'express';
 
+import { AuditService } from '../admin/audit.service';
 import { MailService } from '../common/mail/mail.service';
 import { RedisService } from '../common/redis/redis.service';
 import { AppEnv } from '../config/env.validation';
@@ -49,6 +51,7 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService<AppEnv, true>,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   private get<K extends keyof AppEnv>(key: K) {
@@ -64,6 +67,7 @@ export class AuthService {
       email: dto.email,
       passwordHash: await bcrypt.hash(dto.password, BCRYPT_COST),
     });
+    this.auditLog({ user: user.id, kind: 'signup', title: 'Joined ChatWave' });
     return { user: await this.users.toOwnerPayload(user) };
   }
 
@@ -171,12 +175,14 @@ export class AuthService {
       return this.users.applyOAuth(user, profile);
     }
 
-    return this.users.createOAuthUser({
+    const created = await this.users.createOAuthUser({
       name: profile.name || email,
       email,
       photoUrl: profile.photoUrl ?? null,
       providers: { [providerField(profile.provider)]: profile.providerId },
     });
+    this.auditLog({ user: created.id, kind: 'signup', title: 'Joined ChatWave' });
+    return created;
   }
 
   async finishOAuth(user: UserDocument, req: Request, res: Response) {
@@ -207,16 +213,34 @@ export class AuthService {
   private async issueSession(user: UserDocument, req: Request, res: Response) {
     this.assertAllowed(user);
     await this.users.markOnline(user);
+    const userAgent = req.headers['user-agent'] ?? '';
+    const platform = detectPlatform(userAgent);
     const sessionId = await this.redis.createSession(user.id, {
-      userAgent: req.headers['user-agent'] ?? '',
+      userAgent,
       ip: clientIp(req.ip, req.headers['x-forwarded-for']),
-      platform: detectPlatform(req.headers['user-agent'] ?? ''),
+      platform,
     });
     this.setCookie(res, sessionId);
+    const session = await this.redis.getSession(sessionId);
+    this.auditLog({
+      user: user.id,
+      kind: 'login',
+      title: `Signed in from ${session?.city?.trim() || 'the web'}`,
+      detail: `${session?.browser || 'ChatWave'} · ChatWave ${session?.platform || platform}`,
+    });
     return {
       user: await this.users.toOwnerPayload(user),
       accessToken: this.jwt.sign({ sub: user.id, sid: sessionId }, { expiresIn: '15m' }),
     };
+  }
+
+  private auditLog(input: { user: string; kind: 'signup' | 'login'; title: string; detail?: string }) {
+    try {
+      const audit = this.moduleRef.get(AuditService, { strict: false });
+      void audit.log(input).catch(() => undefined);
+    } catch {
+      /* Admin module not loaded in this process */
+    }
   }
 
   private async linkProvider(userId: string, profile: OAuthProfile) {

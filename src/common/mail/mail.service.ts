@@ -73,6 +73,45 @@ export class MailService {
     }
   }
 
+  async sendAccountBanned(email: string, name: string): Promise<void> {
+    const subject = 'Your ChatWave account has been banned';
+    const text = [
+      `Hi ${name},`,
+      'Your ChatWave account has been banned by the owner.',
+      'If you think this is a mistake, reply to this email.',
+    ].join('\n');
+    const html = `
+      <p>Hi ${name},</p>
+      <p>Your ChatWave account has been banned by the owner.</p>
+      <p>If you think this is a mistake, reply to this email.</p>
+    `;
+
+    if (!this.transporter) {
+      if (this.isDev) {
+        this.logger.warn(`SMTP is not configured. Banned-account notice for ${email}`);
+        return;
+      }
+      throw new Error('Email is not configured');
+    }
+
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: email,
+        subject,
+        text,
+        html,
+      });
+    } catch (error) {
+      if (this.isDev) {
+        const message = error instanceof Error ? error.message : 'send failed';
+        this.logger.warn(`SMTP send failed (${message}). Banned-account notice for ${email}`);
+        return;
+      }
+      throw error;
+    }
+  }
+
   async sendConfirmDeleteAccount(email: string, url: string): Promise<void> {
     const subject = 'Confirm your ChatWave account deletion';
     const text = [
