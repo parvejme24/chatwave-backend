@@ -12,6 +12,7 @@ import { isValidObjectId, Model, Types } from 'mongoose';
 import { randomBytes } from 'crypto';
 
 import { BLOCKS_CHECK } from '../blocks/blocks.constants';
+import { SETTINGS_DEFAULTS } from '../settings/settings.constants';
 import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { RedisService } from '../common/redis/redis.service';
 import { UpdateProfileDto } from './users.dto';
@@ -232,6 +233,11 @@ export class UsersService {
     return this.users.findByIdAndUpdate(userId, { deletedAt: new Date() }).exec();
   }
 
+  async closeAccount(userId: string) {
+    await this.goOffline(userId);
+    return this.users.findByIdAndUpdate(userId, { deletedAt: new Date(), status: 'banned', presence: 'offline' }).exec();
+  }
+
   async applyOAuth(
     user: UserDocument,
     profile: { provider: 'google' | 'github'; providerId: string; photoUrl?: string | null },
@@ -352,7 +358,7 @@ export class UsersService {
       initials: initialsFromName(trimmed),
       tone: randomTone(),
       isOwner: (await this.users.countDocuments().exec()) === 0,
-      settings: { showLastSeen: true, readReceipts: true },
+      settings: { ...SETTINGS_DEFAULTS, soundFavorites: { ...SETTINGS_DEFAULTS.soundFavorites } },
     };
   }
 

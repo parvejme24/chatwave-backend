@@ -161,4 +161,11 @@ describe('MessagesService', () => {
     await expect(service.send(viewer, CONV, { type: 'text', text: 'hi' })).rejects.toBeInstanceOf(ForbiddenException);
     expect(model.create).not.toHaveBeenCalled();
   });
+
+  it('does not write seen receipts when readReceipts is off', async () => {
+    users.findActiveById.mockResolvedValue({ id: A, settings: { readReceipts: false } });
+    await expect(service.mark(viewer, CONV, 'seen')).resolves.toEqual({ ok: true, updated: 0 });
+    expect(model.find).not.toHaveBeenCalled();
+    expect(conversations.resetUnread).toHaveBeenCalledWith(CONV, A);
+  });
 });

@@ -72,4 +72,47 @@ export class MailService {
       throw error;
     }
   }
+
+  async sendConfirmDeleteAccount(email: string, url: string): Promise<void> {
+    const subject = 'Confirm your ChatWave account deletion';
+    const text = [
+      'Confirm that you want to delete your ChatWave account.',
+      `Open this link within 30 minutes: ${url}`,
+      'If you did not ask to delete your account, you can ignore this email.',
+    ].join('\n');
+    const html = `
+      <p>Confirm that you want to delete your ChatWave account.</p>
+      <p><a href="${url}">Delete my account</a></p>
+      <p>This link expires in 30 minutes. If you did not ask to delete your account, you can ignore this email.</p>
+    `;
+
+    if (this.isDev) {
+      this.logger.warn(`Delete-account link for ${email}: ${url}`);
+    }
+
+    if (!this.transporter) {
+      if (this.isDev) {
+        this.logger.warn(`SMTP is not configured. Delete-account link for ${email}: ${url}`);
+        return;
+      }
+      throw new Error('Email is not configured');
+    }
+
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: email,
+        subject,
+        text,
+        html,
+      });
+    } catch (error) {
+      if (this.isDev) {
+        const message = error instanceof Error ? error.message : 'send failed';
+        this.logger.warn(`SMTP send failed (${message}). Delete-account link for ${email}: ${url}`);
+        return;
+      }
+      throw error;
+    }
+  }
 }

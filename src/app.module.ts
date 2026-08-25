@@ -17,6 +17,7 @@ import { CallsModule } from './calls/calls.module';
 import { BlocksModule } from './blocks/blocks.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { SessionsModule } from './sessions/sessions.module';
     ContactsModule,
     BlocksModule,
     SessionsModule,
+    SettingsModule,
     AuthModule,
   ],
   controllers: [AppController],

@@ -53,6 +53,10 @@ export class MessagesService {
     this.live = publisher;
   }
 
+  shouldSendReadReceipt(user?: { settings?: { readReceipts?: boolean } } | null) {
+    return user?.settings?.readReceipts !== false;
+  }
+
   async list(viewer: AuthViewer, conversationId: string, query: { cursor?: string; limit?: number; view?: string; q?: string }) {
     const conversation = await this.conversations.assertMember(viewer.id, conversationId);
     const take = Math.min(Math.max(query.limit || 30, 1), 100);
@@ -232,6 +236,13 @@ export class MessagesService {
 
   async mark(viewer: AuthViewer, conversationId: string, status: 'delivered' | 'seen', messageId?: string) {
     await this.conversations.assertMember(viewer.id, conversationId);
+    if (status === 'seen') {
+      const me = await this.users.findActiveById(viewer.id);
+      if (!this.shouldSendReadReceipt(me)) {
+        await this.conversations.resetUnread(conversationId, viewer.id);
+        return { ok: true as const, updated: 0 };
+      }
+    }
     const filter: Record<string, unknown> = {
       conversation: oid(conversationId),
       sender: { $ne: oid(viewer.id) },

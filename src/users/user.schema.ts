@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
+import { SETTINGS_DEFAULTS, SOUND_DEFAULTS, type UserSettings } from '../settings/settings.constants';
 import { PRESENCE, STATUSES, TONES } from './users.constants';
 
 @Schema({ timestamps: true, collection: 'users' })
@@ -57,10 +58,10 @@ export class User {
   emailVerifiedAt: Date | null;
 
   @Prop({
-    type: { showLastSeen: Boolean, readReceipts: Boolean },
-    default: () => ({ showLastSeen: true, readReceipts: true }),
+    type: Object,
+    default: () => ({ ...SETTINGS_DEFAULTS, soundFavorites: { ...SOUND_DEFAULTS } }),
   })
-  settings: { showLastSeen: boolean; readReceipts: boolean };
+  settings: UserSettings;
 
   createdAt: Date;
   updatedAt: Date;

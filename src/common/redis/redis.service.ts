@@ -187,6 +187,18 @@ export class RedisService implements OnModuleDestroy {
     return null;
   }
 
+  async setDeleteToken(token: string, userId: string, ttl: number): Promise<void> {
+    await this.client.set(redisKey.deleteAccount(token), userId, 'EX', ttl);
+  }
+
+  async consumeDeleteToken(token: string): Promise<string | null> {
+    const key = redisKey.deleteAccount(token);
+    const userId = await this.client.get(key);
+    if (!userId) return null;
+    await this.client.del(key);
+    return userId;
+  }
+
   async setLivePresence(userId: string, presence: LivePresence, ttl: number): Promise<void> {
     await this.client
       .multi()

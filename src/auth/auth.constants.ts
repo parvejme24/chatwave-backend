@@ -16,6 +16,7 @@ export const redisKey = {
   otp: (email: string) => `otp:reset:${email}`,
   otpCount: (email: string) => `otp:reset:count:${email}`,
   oauthLink: (id: string) => `oauth:link:${id}`,
+  deleteAccount: (token: string) => `delete:${token}`,
 };
 
 export type OAuthProvider = 'google' | 'github';

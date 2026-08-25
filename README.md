@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, and session list/revoke are implemented.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, session list/revoke, and Settings are implemented.
 
 ## Setup
 
@@ -187,6 +187,26 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/blocks \
   -d '{"username":"nadia"}'
 
 curl -s -b cookies.txt -X DELETE http://localhost:5000/api/blocks/USER_ID
+```
+
+## Settings examples
+
+Appearance, notifications, sounds, and privacy live on `User.settings`. Profile photo, blocks, and device sign-out stay on their own routes. `isOwner` is returned so the client can show Advanced settings; this module does not ban other users.
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/settings
+
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"reduceMotion":true,"videoQuality":"1080p"}'
+
+curl -s -b cookies.txt http://localhost:5000/api/settings/sounds
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/settings/delete-account
+
+curl -s -X POST http://localhost:5000/api/settings/delete-account/confirm \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"TOKEN"}'
 ```
 
 ## Conversations examples

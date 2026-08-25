@@ -9,5 +9,6 @@ import { SessionsService } from './sessions.service';
   imports: [UsersModule, forwardRef(() => AuthModule)],
   controllers: [SessionsController],
   providers: [SessionsService],
+  exports: [SessionsService],
 })
 export class SessionsModule {}
