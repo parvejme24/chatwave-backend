@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth and Users are implemented; chats, groups, and calls come later.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, and Conversations are implemented; messages, calls, and contacts come later.
 
 ## Setup
 
@@ -133,6 +133,40 @@ curl -s -b cookies.txt http://localhost:5000/api/users/by-username/nadia
 ```
 
 `GET /api/auth/me` and `PATCH /api/auth/profile` still work; they call the Users service.
+
+## Conversations examples
+
+List chats (chips: `all`, `unread`, `groups`, `archived`; `calls` returns `[]` until Calls exist):
+
+```bash
+curl -s -b cookies.txt 'http://localhost:5000/api/conversations?filter=all&limit=50'
+```
+
+Start a direct chat (200 if it already exists, otherwise 201):
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/direct \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"64a000000000000000000002"}'
+```
+
+Create a group (name + at least 3 other people; you become admin):
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/groups \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Frontend Guild","memberIds":["64a000000000000000000002","64a000000000000000000003","64a000000000000000000004"]}'
+```
+
+Pin to top and mark a thread read:
+
+```bash
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSATION_ID/membership \
+  -H 'Content-Type: application/json' \
+  -d '{"pinned":true}'
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/read
+```
 
 ## Env
 

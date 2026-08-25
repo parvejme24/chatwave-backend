@@ -1,0 +1,332 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { isValidObjectId, Model, Types } from 'mongoose';
+
+import { initialsFromName, type AuthViewer, type PublicUser } from '../users/users.constants';
+import { UserDocument } from '../users/user.schema';
+import { UsersService } from '../users/users.service';
+import {
+  MIN_GROUP_MEMBERS,
+  pairKey,
+  toneFromName,
+  type ConversationDetail,
+  type ConversationListItem,
+  type ListFilter,
+  type PreviewIcon,
+} from './conversations.constants';
+import { UpdateConversationDto, UpdateMembershipDto } from './conversations.dto';
+import { Conversation, ConversationDocument, ConversationMember } from './conversation.schema';
+
+@Injectable()
+export class ConversationsService {
+  constructor(
+    @InjectModel(Conversation.name) private readonly conversations: Model<ConversationDocument>,
+    private readonly users: UsersService,
+  ) {}
+
+  async list(viewer: AuthViewer, filter: ListFilter = 'all', q?: string, limit = 50) {
+    if (filter === 'calls') return { conversations: [] as ConversationListItem[] };
+    const take = Math.min(Math.max(limit || 50, 1), 100);
+    const rows = await this.conversations
+      .find({ 'members.user': new Types.ObjectId(viewer.id) })
+      .sort({ lastMessageAt: -1 })
+      .limit(200)
+      .exec();
+    const people = await this.peopleMap(rows, viewer);
+    const query = q?.trim().toLowerCase();
+    const items: ConversationListItem[] = [];
+    for (const row of rows) {
+      const mine = activeMember(row, viewer.id);
+      if (!mine) continue;
+      if (filter === 'archived' ? !mine.archived : mine.archived) continue;
+      if (filter === 'unread' && mine.unreadCount <= 0) continue;
+      if (filter === 'groups' && row.type !== 'group') continue;
+      const item = await this.toListItem(viewer, row, mine, people);
+      if (query && !`${item.name} ${item.preview}`.toLowerCase().includes(query)) continue;
+      items.push(item);
+    }
+    items.sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.time) - Date.parse(a.time));
+    return { conversations: items.slice(0, take) };
+  }
+
+  async getOne(viewer: AuthViewer, id: string) {
+    return { conversation: await this.toDetail(viewer, await this.requireMember(viewer.id, id)) };
+  }
+
+  async createDirect(viewer: AuthViewer, otherId: string) {
+    if (otherId === viewer.id) throw new BadRequestException({ error: 'You cannot start a chat with yourself' });
+    if (!isMongoId(otherId) || !(await this.users.findActiveById(otherId))) {
+      throw new BadRequestException({ error: 'That person is not available' });
+    }
+    const key = pairKey(viewer.id, otherId);
+    const existing = await this.conversations.findOne({ type: 'direct', pairKey: key }).exec();
+    if (existing) {
+      this.ensureDirectMembers(existing, viewer.id, otherId);
+      await existing.save();
+      return { created: false, conversation: await this.toDetail(viewer, existing) };
+    }
+    const now = new Date();
+    try {
+      const row = await this.conversations.create({
+        type: 'direct',
+        name: '',
+        createdBy: new Types.ObjectId(viewer.id),
+        pairKey: key,
+        members: [memberDoc(viewer.id, 'member', now), memberDoc(otherId, 'member', now)],
+        lastMessageAt: now,
+      });
+      return { created: true, conversation: await this.toDetail(viewer, row) };
+    } catch (error) {
+      if (!isDuplicate(error)) throw error;
+      const row = await this.conversations.findOne({ type: 'direct', pairKey: key }).exec();
+      if (!row) throw error;
+      return { created: false, conversation: await this.toDetail(viewer, row) };
+    }
+  }
+
+  async createGroup(viewer: AuthViewer, name: string, memberIds: string[]) {
+    const others = [...new Set(memberIds)].filter((id) => id !== viewer.id);
+    if (others.length < MIN_GROUP_MEMBERS) {
+      throw new BadRequestException({ error: 'Add at least 3 other people' });
+    }
+    if (others.some((id) => !isMongoId(id))) throw new BadRequestException({ error: 'Pick valid people' });
+    const people = await this.users.findByIds(others);
+    if (people.length !== others.length || people.some((p) => p.status !== 'active' || p.deletedAt)) {
+      throw new BadRequestException({ error: 'Someone in this group is not available' });
+    }
+    const now = new Date();
+    const trimmed = name.trim();
+    const row = await this.conversations.create({
+      type: 'group',
+      name: trimmed,
+      initials: initialsFromName(trimmed),
+      tone: toneFromName(trimmed),
+      createdBy: new Types.ObjectId(viewer.id),
+      members: [memberDoc(viewer.id, 'admin', now), ...others.map((id) => memberDoc(id, 'member', now))],
+      lastMessageAt: now,
+      preview: 'You created this group',
+    });
+    return { conversation: await this.toDetail(viewer, row) };
+  }
+
+  async updateGroup(viewer: AuthViewer, id: string, dto: UpdateConversationDto) {
+    const row = await this.requireMember(viewer.id, id);
+    if (row.type !== 'group') throw new BadRequestException({ error: 'You can only rename a group' });
+    if (activeMember(row, viewer.id)?.role !== 'admin') {
+      throw new ForbiddenException({ error: 'Only a group admin can rename this chat' });
+    }
+    if (dto.name) {
+      row.name = dto.name;
+      row.initials = initialsFromName(dto.name);
+    }
+    if (dto.tone) row.tone = dto.tone;
+    await row.save();
+    return { conversation: await this.toDetail(viewer, row) };
+  }
+
+  async updateMembership(viewer: AuthViewer, id: string, dto: UpdateMembershipDto) {
+    const { row, mine } = await this.requireMine(viewer.id, id);
+    if (dto.pinned !== undefined) mine.pinned = dto.pinned;
+    if (dto.muted !== undefined) mine.muted = dto.muted;
+    if (dto.archived !== undefined) mine.archived = dto.archived;
+    await row.save();
+    return { conversation: await this.toDetail(viewer, row) };
+  }
+
+  async markRead(viewer: AuthViewer, id: string) {
+    const { row, mine } = await this.requireMine(viewer.id, id);
+    mine.unreadCount = 0;
+    mine.lastReadAt = new Date();
+    await row.save();
+    return { conversation: await this.toDetail(viewer, row) };
+  }
+
+  async bumpFromMessage(
+    conversationId: string,
+    input: { senderId: string; preview: string; previewIcon?: PreviewIcon | null; messageId: string },
+  ) {
+    const row = await this.conversations.findById(conversationId).exec();
+    if (!row) return null;
+    row.preview = input.preview;
+    row.previewIcon = input.previewIcon ?? null;
+    row.lastMessage = new Types.ObjectId(input.messageId);
+    row.lastMessageAt = new Date();
+    for (const member of row.members) {
+      if (!member.leftAt && String(member.user) !== input.senderId) member.unreadCount += 1;
+    }
+    await row.save();
+    return row;
+  }
+
+  private async requireMember(userId: string, id: string) {
+    if (!isMongoId(id)) throw new NotFoundException({ error: 'Conversation not found' });
+    const row = await this.conversations.findById(id).exec();
+    if (!row || !activeMember(row, userId)) throw new NotFoundException({ error: 'Conversation not found' });
+    return row;
+  }
+
+  private async requireMine(userId: string, id: string) {
+    const row = await this.requireMember(userId, id);
+    const mine = activeMember(row, userId);
+    if (!mine) throw new NotFoundException({ error: 'Conversation not found' });
+    return { row, mine };
+  }
+
+  private ensureDirectMembers(row: ConversationDocument, a: string, b: string) {
+    for (const id of [a, b]) {
+      const member = row.members.find((m) => String(m.user) === id);
+      if (member) {
+        member.leftAt = null;
+        member.removedBy = null;
+      } else {
+        row.members.push(memberDoc(id, 'member', new Date()));
+      }
+    }
+  }
+
+  private async peopleMap(rows: ConversationDocument[], viewer: AuthViewer) {
+    const ids = new Set<string>([viewer.id]);
+    for (const row of rows) {
+      for (const member of row.members) {
+        if (!member.leftAt) ids.add(String(member.user));
+      }
+    }
+    const docs = await this.users.findByIds([...ids]);
+    return new Map(docs.map((doc) => [doc.id, doc]));
+  }
+
+  private async toDetail(viewer: AuthViewer, row: ConversationDocument): Promise<ConversationDetail> {
+    const people = await this.peopleMap([row], viewer);
+    const mine = activeMember(row, viewer.id);
+    if (!mine) throw new NotFoundException({ error: 'Conversation not found' });
+    const members: ConversationDetail['members'] = [];
+    for (const member of row.members) {
+      if (member.leftAt) continue;
+      const peer = await this.peerView(viewer, String(member.user), people);
+      members.push({
+        id: peer.id,
+        name: peer.name,
+        username: peer.username,
+        initials: peer.initials,
+        tone: peer.tone,
+        photoUrl: peer.photoUrl,
+        presence: peer.presence,
+        role: member.role === 'admin' ? ('admin' as const) : ('member' as const),
+        isMe: peer.id === viewer.id,
+      });
+    }
+    return {
+      ...(await this.toListItem(viewer, row, mine, people)),
+      createdBy: String(row.createdBy),
+      members,
+      messages: [],
+    };
+  }
+
+  private async toListItem(
+    viewer: AuthViewer,
+    row: ConversationDocument,
+    mine: ConversationMember,
+    people: Map<string, UserDocument>,
+  ): Promise<ConversationListItem> {
+    const active = row.members.filter((m) => !m.leftAt);
+    const base = {
+      id: row.id,
+      unread: mine.unreadCount ?? 0,
+      pinned: Boolean(mine.pinned),
+      muted: Boolean(mine.muted),
+      archived: Boolean(mine.archived),
+      preview: row.preview ?? '',
+      previewIcon: (row.previewIcon as PreviewIcon | null) ?? null,
+      live: false,
+      time: (row.lastMessageAt ?? row.createdAt ?? new Date()).toISOString(),
+    };
+
+    if (row.type === 'direct') {
+      const otherId = active.map((m) => String(m.user)).find((id) => id !== viewer.id) ?? viewer.id;
+      const peer = await this.peerView(viewer, otherId, people);
+      const status = peer.presence === 'online' ? 'Online' : peer.presence === 'away' ? 'Away' : 'Offline';
+      return {
+        ...base,
+        type: 'direct',
+        group: false,
+        name: peer.name,
+        username: peer.username,
+        initials: peer.initials,
+        tone: peer.tone,
+        photoUrl: peer.photoUrl,
+        presence: peer.presence,
+        status,
+        sub: peer.sub ? `@${peer.username} · ${peer.sub}` : `@${peer.username}`,
+      };
+    }
+
+    const online = (
+      await Promise.all(active.map((m) => this.peerView(viewer, String(m.user), people)))
+    ).filter((p) => p.presence === 'online' || p.presence === 'away').length;
+    return {
+      ...base,
+      type: 'group',
+      group: true,
+      name: row.name,
+      username: null,
+      initials: row.initials || initialsFromName(row.name),
+      tone: row.tone || 'e',
+      photoUrl: row.photo ?? null,
+      presence: 'offline',
+      status: `${active.length} members · ${online} online`,
+      sub: `${active.length} members`,
+    };
+  }
+
+  private async peerView(viewer: AuthViewer, userId: string, people: Map<string, UserDocument>) {
+    const doc = people.get(userId);
+    if (doc) return this.users.publicUser(viewer, doc);
+    return {
+      id: userId,
+      name: 'ChatWave user',
+      username: 'user',
+      initials: 'CW',
+      tone: 'a',
+      photoUrl: null,
+      role: '',
+      location: '',
+      presence: 'offline',
+      lastSeenAt: null,
+      sub: '',
+    } satisfies PublicUser;
+  }
+}
+
+function activeMember(row: ConversationDocument, userId: string) {
+  return row.members.find((m) => String(m.user) === userId && !m.leftAt);
+}
+
+function memberDoc(userId: string, role: 'admin' | 'member', now: Date): ConversationMember {
+  return {
+    user: new Types.ObjectId(userId),
+    role,
+    pinned: false,
+    muted: false,
+    archived: false,
+    unreadCount: 0,
+    lastReadAt: null,
+    lastReadMessage: null,
+    joinedAt: now,
+    leftAt: null,
+    removedBy: null,
+  };
+}
+
+function isMongoId(id: string) {
+  return isValidObjectId(id) && String(new Types.ObjectId(id)) === id;
+}
+
+function isDuplicate(error: unknown) {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 11000;
+}

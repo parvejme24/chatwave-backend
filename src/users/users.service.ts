@@ -164,6 +164,11 @@ export class UsersService {
     return this.users.findById(id).exec();
   }
 
+  findByIds(ids: string[]) {
+    if (ids.length === 0) return Promise.resolve([] as UserDocument[]);
+    return this.users.find({ _id: { $in: ids } }).exec();
+  }
+
   async findActiveById(id: string) {
     const user = await this.users.findById(id).exec();
     return !user || user.status === 'banned' || user.deletedAt ? null : user;

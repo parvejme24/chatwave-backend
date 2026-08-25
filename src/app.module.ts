@@ -10,6 +10,7 @@ import { MailModule } from './common/mail/mail.module';
 import { RedisModule } from './common/redis/redis.module';
 import { AppEnv, validateEnv } from './config/env.validation';
 import { UsersModule } from './users/users.module';
+import { ConversationsModule } from './conversations/conversations.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { UsersModule } from './users/users.module';
     MailModule,
     CloudinaryModule,
     UsersModule,
+    ConversationsModule,
     AuthModule,
   ],
   controllers: [AppController],
