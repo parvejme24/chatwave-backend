@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, and Conversations are implemented; messages, calls, and contacts come later.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, and Messages (REST + Socket.IO) are implemented; calls and contacts come later.
 
 ## Setup
 
@@ -167,6 +167,76 @@ curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSA
 
 curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/read
 ```
+
+## Messages examples
+
+List a thread (oldest → newest in the page). `view=pinned` filters pins; `q` searches text, caption, and file name:
+
+```bash
+curl -s -b cookies.txt 'http://localhost:5000/api/conversations/CONVERSATION_ID/messages?limit=30'
+
+curl -s -b cookies.txt 'http://localhost:5000/api/conversations/CONVERSATION_ID/messages?view=pinned&q=waveform'
+```
+
+Send a text message (201). Media (`image`, `file`, `voice`, `video_note`) is multipart field `file` on the same path:
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"text","text":"the waveform looks good"}'
+```
+
+React, pin, or delete (query `scope=me|everyone`, default `me`):
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/messages/MESSAGE_ID/reactions \
+  -H 'Content-Type: application/json' \
+  -d '{"emoji":"🔥"}'
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/messages/MESSAGE_ID/pin
+
+curl -s -b cookies.txt -X DELETE 'http://localhost:5000/api/messages/MESSAGE_ID?scope=me'
+```
+
+Mark delivered / seen (seen also clears unread via the same path as `POST /conversations/:id/read`):
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/delivered
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/seen
+```
+
+REST history DTOs include `dir` (`in` | `out`) relative to you. Socket payloads are canonical: same fields, plus `senderId` instead of `dir`. Map locally with `dir = message.senderId === me ? "out" : "in"`. Reaction objects on the socket may include `userIds` so the client can set `mine`.
+
+## Socket.IO
+
+Same origin and port as HTTP is fine (`http://localhost:5000`), path `/socket.io`. CORS origin is `FRONTEND_URL` with credentials. Auth is the `cw_session` cookie **or** `handshake.auth.token` / `Authorization: Bearer` JWT (`sub` + `sid`).
+
+```ts
+import { io } from "socket.io-client"
+
+const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL, {
+  withCredentials: true,
+  auth: { token },
+})
+
+socket.emit("conversation:join", { conversationId })
+socket.on("message:new", handler)
+```
+
+| Client emit | Payload | Server emit | Payload |
+| --- | --- | --- | --- |
+| `conversation:join` | `{ conversationId }` | `conversation:joined` | `{ conversationId }` |
+| `conversation:leave` | `{ conversationId }` | | |
+| `message:send` | `{ conversationId, type: "text", text, replyTo?, clientId? }` | `message:new` | `{ message }` canonical |
+| | | ACK | `{ ok, message, clientId }` viewer DTO (`dir: "out"`) |
+| `typing:start` / `typing:stop` | `{ conversationId }` | `typing` | `{ conversationId, userId, name, typing }` |
+| `message:delivered` | `{ conversationId, messageId? }` | `receipts:updated` | `{ conversationId, messageId, receipts }` |
+| `message:seen` | `{ conversationId, messageId? }` | `receipts:updated` | same |
+| | | `message:updated` | `{ message }` pin / reaction |
+| | | `message:deleted` | `{ id, conversationId, scope: "me" \| "everyone" }` |
+| | | `conversation:preview` | `{ conversationId, preview, previewIcon, lastMessageAt, unread }` to `user:{id}` |
+
+Rooms: `conversation:{conversationId}` (open thread) and `user:{userId}` (sidebar unread / preview). Upload media with REST; the server broadcasts `message:new`. Text can go through REST or `message:send` — both use `MessagesService.send`.
 
 ## Env
 

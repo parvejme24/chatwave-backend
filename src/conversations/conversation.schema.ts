@@ -66,6 +66,9 @@ export class Conversation {
   @Prop({ type: Types.ObjectId, default: null })
   lastMessage: Types.ObjectId | null;
 
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  lastMessageSender: Types.ObjectId | null;
+
   @Prop({ type: Date, default: Date.now })
   lastMessageAt: Date;
 

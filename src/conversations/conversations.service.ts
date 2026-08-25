@@ -14,9 +14,11 @@ import {
   MIN_GROUP_MEMBERS,
   pairKey,
   toneFromName,
+  viewerPreview,
   type ConversationDetail,
   type ConversationListItem,
   type ListFilter,
+  type MemberRole,
   type PreviewIcon,
 } from './conversations.constants';
 import { UpdateConversationDto, UpdateMembershipDto } from './conversations.dto';
@@ -152,15 +154,110 @@ export class ConversationsService {
   ) {
     const row = await this.conversations.findById(conversationId).exec();
     if (!row) return null;
-    row.preview = input.preview;
-    row.previewIcon = input.previewIcon ?? null;
-    row.lastMessage = new Types.ObjectId(input.messageId);
-    row.lastMessageAt = new Date();
-    for (const member of row.members) {
-      if (!member.leftAt && String(member.user) !== input.senderId) member.unreadCount += 1;
-    }
+    this.applyPreview(row, {
+      preview: input.preview,
+      previewIcon: input.previewIcon ?? null,
+      lastMessage: input.messageId,
+      lastMessageAt: new Date(),
+      senderId: input.senderId,
+    });
+    this.applyUnreadIncrement(row, input.senderId);
     await row.save();
     return row;
+  }
+
+  async bumpPreview(
+    conversationId: string,
+    input: {
+      preview: string;
+      previewIcon?: PreviewIcon | null;
+      lastMessage?: string | null;
+      lastMessageAt?: Date;
+      senderId?: string | null;
+    },
+  ) {
+    const row = await this.conversations.findById(conversationId).exec();
+    if (!row) return null;
+    this.applyPreview(row, input);
+    await row.save();
+    return row;
+  }
+
+  async incrementUnread(conversationId: string, exceptUserId: string) {
+    const row = await this.conversations.findById(conversationId).exec();
+    if (!row) return null;
+    this.applyUnreadIncrement(row, exceptUserId);
+    await row.save();
+    return row;
+  }
+
+  async resetUnread(conversationId: string, userId: string) {
+    const row = await this.conversations.findById(conversationId).exec();
+    if (!row) return null;
+    const mine = activeMember(row, userId);
+    if (!mine) return null;
+    mine.unreadCount = 0;
+    mine.lastReadAt = new Date();
+    await row.save();
+    return row;
+  }
+
+  async assertMember(userId: string, conversationId: string) {
+    if (!isMongoId(conversationId)) {
+      throw new ForbiddenException({ error: 'You cannot access this chat' });
+    }
+    const row = await this.conversations.findById(conversationId).exec();
+    if (!row || !activeMember(row, userId)) {
+      throw new ForbiddenException({ error: 'You cannot access this chat' });
+    }
+    return row;
+  }
+
+  memberRole(row: ConversationDocument, userId: string): MemberRole | null {
+    const role = activeMember(row, userId)?.role;
+    return role === 'admin' || role === 'member' ? role : null;
+  }
+
+  activeMemberIds(row: ConversationDocument) {
+    return row.members.filter((member) => !member.leftAt).map((member) => String(member.user));
+  }
+
+  unreadOf(row: ConversationDocument, userId: string) {
+    return activeMember(row, userId)?.unreadCount ?? 0;
+  }
+
+  async getById(conversationId: string) {
+    if (!isMongoId(conversationId)) return null;
+    return this.conversations.findById(conversationId).exec();
+  }
+
+  isGroupAdmin(row: ConversationDocument, userId: string) {
+    return row.type === 'group' && activeMember(row, userId)?.role === 'admin';
+  }
+
+  private applyPreview(
+    row: ConversationDocument,
+    input: {
+      preview: string;
+      previewIcon?: PreviewIcon | null;
+      lastMessage?: string | null;
+      lastMessageAt?: Date;
+      senderId?: string | null;
+    },
+  ) {
+    row.preview = input.preview;
+    if (input.previewIcon !== undefined) row.previewIcon = input.previewIcon ?? null;
+    if (input.lastMessage) row.lastMessage = new Types.ObjectId(input.lastMessage);
+    if (input.lastMessageAt) row.lastMessageAt = input.lastMessageAt;
+    if (input.senderId !== undefined) {
+      row.lastMessageSender = input.senderId ? new Types.ObjectId(input.senderId) : null;
+    }
+  }
+
+  private applyUnreadIncrement(row: ConversationDocument, exceptUserId: string) {
+    for (const member of row.members) {
+      if (!member.leftAt && String(member.user) !== exceptUserId) member.unreadCount += 1;
+    }
   }
 
   private async requireMember(userId: string, id: string) {
@@ -241,7 +338,11 @@ export class ConversationsService {
       pinned: Boolean(mine.pinned),
       muted: Boolean(mine.muted),
       archived: Boolean(mine.archived),
-      preview: row.preview ?? '',
+      preview: viewerPreview(
+        row.preview ?? '',
+        row.lastMessageSender ? String(row.lastMessageSender) : null,
+        viewer.id,
+      ),
       previewIcon: (row.previewIcon as PreviewIcon | null) ?? null,
       live: false,
       time: (row.lastMessageAt ?? row.createdAt ?? new Date()).toISOString(),

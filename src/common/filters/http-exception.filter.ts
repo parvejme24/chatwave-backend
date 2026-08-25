@@ -15,12 +15,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<{ url?: string }>();
 
     if (response.headersSent) {
       return;
     }
 
-    const { status, error } = this.normalize(exception);
+    const { status, error } = this.normalize(exception, request?.url);
     if (status >= 500) {
       this.logger.error(this.stringify(exception));
     }
@@ -28,7 +29,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     response.status(status).json({ error });
   }
 
-  private normalize(exception: unknown): { status: number; error: string } {
+  private normalize(exception: unknown, url?: string): { status: number; error: string } {
     if (
       exception &&
       typeof exception === 'object' &&
@@ -40,7 +41,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
           ? exception.code
           : '';
       if (code === 'LIMIT_FILE_SIZE') {
-        return { status: HttpStatus.BAD_REQUEST, error: 'Keep the photo under 2 MB' };
+        const photo = typeof url === 'string' && url.includes('/users/');
+        return {
+          status: HttpStatus.BAD_REQUEST,
+          error: photo ? 'Keep the photo under 2 MB' : 'That file is too large',
+        };
       }
       return { status: HttpStatus.BAD_REQUEST, error: 'Could not upload that file' };
     }

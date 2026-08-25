@@ -8,9 +8,10 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { AppEnv } from './config/env.validation';
+import { SocketSessionAdapter } from './messages/adapters/socket-session.adapter';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = (await NestFactory.create(AppModule)) as NestExpressApplication;
   const config = app.get(ConfigService<AppEnv, true>);
   const port = config.get('PORT', { infer: true });
   const frontendUrl = config.get('FRONTEND_URL', { infer: true });
@@ -34,6 +35,7 @@ async function bootstrap() {
     }),
   );
   app.useGlobalFilters(new HttpExceptionFilter());
+  app.useWebSocketAdapter(new SocketSessionAdapter(app, frontendUrl));
 
   await app.listen(port);
   console.log(`Server is running at http://localhost:${port}`);

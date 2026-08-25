@@ -199,4 +199,36 @@ export class RedisService implements OnModuleDestroy {
     if (stale.length > 0) await this.client.srem(presenceKey.onlineSet, ...stale);
     return live;
   }
+
+  async tooMany(key: string, max: number, windowSec: number): Promise<boolean> {
+    const count = await this.client.incr(key);
+    if (count === 1) await this.client.expire(key, windowSec);
+    return count > max;
+  }
+
+  async addSocketConnection(userId: string): Promise<number> {
+    return this.client.incr(`socks:${userId}`);
+  }
+
+  async dropSocketConnection(userId: string): Promise<number> {
+    const count = await this.client.decr(`socks:${userId}`);
+    if (count <= 0) {
+      await this.client.del(`socks:${userId}`);
+      return 0;
+    }
+    return count;
+  }
+
+  async socketCount(userId: string): Promise<number> {
+    const raw = await this.client.get(`socks:${userId}`);
+    return raw ? Number(raw) : 0;
+  }
+
+  async setTyping(conversationId: string, userId: string): Promise<void> {
+    await this.client.set(`typing:${conversationId}:${userId}`, '1', 'EX', 3);
+  }
+
+  async clearTyping(conversationId: string, userId: string): Promise<void> {
+    await this.client.del(`typing:${conversationId}:${userId}`);
+  }
 }

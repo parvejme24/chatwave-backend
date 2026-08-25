@@ -55,3 +55,16 @@ export function pairKey(a: string, b: string) {
 export function toneFromName(name: string) {
   return TONES[name.length % TONES.length];
 }
+
+export function viewerPreview(
+  preview: string,
+  lastSenderId: string | null | undefined,
+  viewerId: string,
+) {
+  if (!preview) return '';
+  if (!lastSenderId || lastSenderId !== viewerId) return preview;
+  const colon = preview.indexOf(': ');
+  if (colon > 0 && colon < 48) return `You: ${preview.slice(colon + 2)}`;
+  if (/^you\b/i.test(preview)) return preview;
+  return `You: ${preview}`;
+}
