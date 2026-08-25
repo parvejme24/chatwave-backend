@@ -297,7 +297,108 @@ export class ConversationsService {
     return new Map(docs.map((doc) => [doc.id, doc]));
   }
 
-  private async toDetail(viewer: AuthViewer, row: ConversationDocument): Promise<ConversationDetail> {
+  async assertGroup(conversationId: string) {
+    if (!isMongoId(conversationId)) throw new NotFoundException({ error: 'Conversation not found' });
+    const row = await this.conversations.findById(conversationId).exec();
+    if (!row) throw new NotFoundException({ error: 'Conversation not found' });
+    if (row.type !== 'group') throw new BadRequestException({ error: 'This is not a group' });
+    return row;
+  }
+
+  async assertActiveMember(conversationId: string, userId: string) {
+    const row = await this.assertGroup(conversationId);
+    if (!activeMember(row, userId)) throw new NotFoundException({ error: 'Conversation not found' });
+    return row;
+  }
+
+  async assertGroupAdmin(conversationId: string, userId: string, error: string) {
+    const row = await this.assertActiveMember(conversationId, userId);
+    if (activeMember(row, userId)?.role !== 'admin') throw new ForbiddenException({ error });
+    return row;
+  }
+
+  getActiveMembers(row: ConversationDocument) {
+    return row.members.filter((member) => !member.leftAt);
+  }
+
+  adminCount(row: ConversationDocument) {
+    return this.getActiveMembers(row).filter((member) => member.role === 'admin').length;
+  }
+
+  setMemberRole(row: ConversationDocument, userId: string, role: MemberRole) {
+    const member = activeMember(row, userId);
+    if (!member) throw new BadRequestException({ error: 'That person is not in this group' });
+    member.role = role;
+  }
+
+  markMemberLeft(row: ConversationDocument, userId: string, removedBy: string | null) {
+    const member = activeMember(row, userId);
+    if (!member) throw new BadRequestException({ error: 'That person is not in this group' });
+    member.leftAt = new Date();
+    member.removedBy = removedBy ? new Types.ObjectId(removedBy) : null;
+  }
+
+  addMembers(row: ConversationDocument, userIds: string[]) {
+    const now = new Date();
+    const added: string[] = [];
+    for (const id of userIds) {
+      if (activeMember(row, id)) continue;
+      const existing = row.members.find((member) => String(member.user) === id);
+      if (existing) {
+        existing.leftAt = null;
+        existing.removedBy = null;
+        existing.role = 'member';
+        existing.joinedAt = now;
+        existing.unreadCount = 0;
+      } else {
+        row.members.push(memberDoc(id, 'member', now));
+      }
+      added.push(id);
+    }
+    return added;
+  }
+
+  longestTenuredMember(row: ConversationDocument, exceptUserId?: string) {
+    const remaining = this.getActiveMembers(row).filter((member) => String(member.user) !== exceptUserId);
+    if (remaining.length === 0) return null;
+    return [...remaining].sort((a, b) => +new Date(a.joinedAt) - +new Date(b.joinedAt))[0] ?? null;
+  }
+
+  async groupMembers(viewer: AuthViewer, row: ConversationDocument) {
+    const people = await this.peopleMap([row], viewer);
+    const members: ConversationDetail['members'] = [];
+    for (const member of this.getActiveMembers(row)) {
+      const peer = await this.peerView(viewer, String(member.user), people);
+      members.push({
+        id: peer.id,
+        name: peer.name,
+        username: peer.username,
+        initials: peer.initials,
+        tone: peer.tone,
+        photoUrl: peer.photoUrl,
+        presence: peer.presence,
+        role: member.role === 'admin' ? 'admin' : 'member',
+        isMe: peer.id === viewer.id,
+      });
+    }
+    members.sort(
+      (a, b) => Number(b.isMe) - Number(a.isMe) || Number(b.role === 'admin') - Number(a.role === 'admin') || a.name.localeCompare(b.name),
+    );
+    return members;
+  }
+
+  async groupHeadline(viewer: AuthViewer, row: ConversationDocument) {
+    const mine = activeMember(row, viewer.id);
+    const people = await this.peopleMap([row], viewer);
+    if (!mine) {
+      const active = this.getActiveMembers(row);
+      return { status: `${active.length} members`, sub: `${active.length} members` };
+    }
+    const item = await this.toListItem(viewer, row, mine, people);
+    return { status: item.status, sub: item.sub };
+  }
+
+  async toDetail(viewer: AuthViewer, row: ConversationDocument): Promise<ConversationDetail> {
     const people = await this.peopleMap([row], viewer);
     const mine = activeMember(row, viewer.id);
     if (!mine) throw new NotFoundException({ error: 'Conversation not found' });

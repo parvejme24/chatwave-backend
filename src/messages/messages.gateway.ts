@@ -18,6 +18,7 @@ import {
   room,
   type CanonicalMessage,
   type DeleteScope,
+  type GroupSocketMember,
   type Preview,
   type RealtimePublisher,
   type ReceiptStatus,
@@ -90,6 +91,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, Re
 
   emitReceipts(conversationId: string, messageId: string, receipts: { userId: string; status: ReceiptStatus; at: string }[]) {
     this.server.to(room('conversation', conversationId)).emit('receipts:updated', { conversationId, messageId, receipts });
+  }
+
+  emitGroupUpdated(conversationId: string, payload: { members: GroupSocketMember[]; status: string; sub: string }) {
+    const body = { conversationId, ...payload };
+    this.server.to(room('conversation', conversationId)).emit('group:updated', body);
+    for (const member of payload.members) {
+      this.server.to(room('user', member.id)).emit('group:updated', body);
+    }
+  }
+
+  emitMemberLeft(conversationId: string, userId: string, reason: 'left' | 'removed') {
+    const body = { conversationId, userId, reason };
+    this.server.to(room('conversation', conversationId)).emit('group:member-left', body);
+    this.server.to(room('user', userId)).emit('group:member-left', body);
+  }
+
+  emitConversationRemoved(userId: string, conversationId: string) {
+    this.server.to(room('user', userId)).emit('conversation:removed', { conversationId });
+  }
+
+  emitPreview(userId: string, preview: Omit<Preview, 'userId'>) {
+    this.server.to(room('user', userId)).emit('conversation:preview', preview);
   }
 
   @SubscribeMessage('conversation:join')

@@ -23,6 +23,11 @@ export type AppEnv = {
   CLOUDINARY_CLOUD_NAME: string;
   CLOUDINARY_API_KEY: string;
   CLOUDINARY_API_SECRET: string;
+  STUN_URL: string;
+  TURN_URL: string;
+  TURN_USERNAME: string;
+  TURN_CREDENTIAL: string;
+  CALL_RING_TIMEOUT_MS: number;
 };
 
 const schema = Joi.object({
@@ -50,6 +55,11 @@ const schema = Joi.object({
   CLOUDINARY_CLOUD_NAME: Joi.string().allow('').default(''),
   CLOUDINARY_API_KEY: Joi.string().allow('').default(''),
   CLOUDINARY_API_SECRET: Joi.string().allow('').default(''),
+  STUN_URL: Joi.string().default('stun:stun.l.google.com:19302'),
+  TURN_URL: Joi.string().allow('').default(''),
+  TURN_USERNAME: Joi.string().allow('').default(''),
+  TURN_CREDENTIAL: Joi.string().allow('').default(''),
+  CALL_RING_TIMEOUT_MS: Joi.number().integer().min(5000).max(120000).default(35000),
 });
 
 function readString(

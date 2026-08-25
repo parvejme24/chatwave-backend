@@ -18,6 +18,6 @@ import { Message, MessageSchema } from './message.schema';
   ],
   controllers: [MessagesController],
   providers: [MessagesService, ChatGateway],
-  exports: [MessagesService],
+  exports: [MessagesService, ChatGateway],
 })
 export class MessagesModule {}

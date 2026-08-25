@@ -231,4 +231,24 @@ export class RedisService implements OnModuleDestroy {
   async clearTyping(conversationId: string, userId: string): Promise<void> {
     await this.client.del(`typing:${conversationId}:${userId}`);
   }
+
+  setCallRing(callId: string, ttlSec: number) {
+    return this.client.set(`call:ring:${callId}`, '1', 'EX', ttlSec);
+  }
+
+  clearCallRing(callId: string) {
+    return this.client.del(`call:ring:${callId}`);
+  }
+
+  setCallBusy(userId: string, callId: string, ttlSec: number) {
+    return this.client.set(`call:busy:${userId}`, callId, 'EX', ttlSec);
+  }
+
+  getCallBusy(userId: string) {
+    return this.client.get(`call:busy:${userId}`);
+  }
+
+  clearCallBusy(userId: string) {
+    return this.client.del(`call:busy:${userId}`);
+  }
 }

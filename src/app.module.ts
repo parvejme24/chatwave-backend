@@ -11,7 +11,9 @@ import { RedisModule } from './common/redis/redis.module';
 import { AppEnv, validateEnv } from './config/env.validation';
 import { UsersModule } from './users/users.module';
 import { ConversationsModule } from './conversations/conversations.module';
+import { GroupsModule } from './groups/groups.module';
 import { MessagesModule } from './messages/messages.module';
+import { CallsModule } from './calls/calls.module';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { MessagesModule } from './messages/messages.module';
     UsersModule,
     ConversationsModule,
     MessagesModule,
+    GroupsModule,
+    CallsModule,
     AuthModule,
   ],
   controllers: [AppController],

@@ -101,6 +101,12 @@ export class Message {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
   deletedFor: Types.ObjectId[];
 
+  @Prop({ type: Types.ObjectId, default: null, index: true })
+  callId: Types.ObjectId | null;
+
+  @Prop({ type: { kind: String, missed: Boolean, label: String, meta: String, callId: String }, default: null })
+  callMeta: { kind: string; missed: boolean; label: string; meta: string; callId: string } | null;
+
   createdAt: Date;
   updatedAt: Date;
 }

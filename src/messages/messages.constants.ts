@@ -2,7 +2,7 @@ import { isValidObjectId, Types } from 'mongoose';
 
 import type { PreviewIcon } from '../conversations/conversations.constants';
 
-export const MESSAGE_TYPES = ['text', 'image', 'file', 'voice', 'video_note', 'system'] as const;
+export const MESSAGE_TYPES = ['text', 'image', 'file', 'voice', 'video_note', 'system', 'call'] as const;
 export const SENDABLE_TYPES = ['text', 'image', 'file', 'voice', 'video_note'] as const;
 export const RECEIPT_STATUSES = ['sent', 'delivered', 'seen'] as const;
 export const TEXT_MAX = 4000;
@@ -47,9 +47,13 @@ export type UploadedChatFile = { buffer: Buffer; mimetype: string; size: number;
 export type CanonicalMessage = {
   id: string;
   conversationId: string;
-  kind: 'message';
+  kind: 'message' | 'call';
   senderId: string | null;
   type: MessageType;
+  missed?: boolean;
+  label?: string;
+  meta?: string;
+  callId?: string;
   text: string;
   caption: string;
   fileName: string;
@@ -77,13 +81,6 @@ export type CanonicalMessage = {
 
 export type MessageDto = Omit<CanonicalMessage, 'senderId'> & { dir: 'in' | 'out' };
 
-export type RealtimePublisher = {
-  emitNew(conversationId: string, message: CanonicalMessage, members: Preview[]): void;
-  emitUpdated(message: CanonicalMessage): void;
-  emitDeleted(id: string, conversationId: string, scope: DeleteScope, userId?: string): void;
-  emitReceipts(conversationId: string, messageId: string, receipts: { userId: string; status: ReceiptStatus; at: string }[]): void;
-};
-
 export type Preview = {
   userId: string;
   conversationId: string;
@@ -91,6 +88,29 @@ export type Preview = {
   previewIcon: PreviewIcon | null;
   lastMessageAt: string;
   unread: number;
+};
+
+export type GroupSocketMember = {
+  id: string;
+  name: string;
+  username: string;
+  initials: string;
+  tone: string;
+  photoUrl: string | null;
+  presence: string;
+  role: 'admin' | 'member';
+  isMe: boolean;
+};
+
+export type RealtimePublisher = {
+  emitNew(conversationId: string, message: CanonicalMessage, members: Preview[]): void;
+  emitUpdated(message: CanonicalMessage): void;
+  emitDeleted(id: string, conversationId: string, scope: DeleteScope, userId?: string): void;
+  emitReceipts(conversationId: string, messageId: string, receipts: { userId: string; status: ReceiptStatus; at: string }[]): void;
+  emitGroupUpdated(conversationId: string, payload: { members: GroupSocketMember[]; status: string; sub: string }): void;
+  emitMemberLeft(conversationId: string, userId: string, reason: 'left' | 'removed'): void;
+  emitConversationRemoved(userId: string, conversationId: string): void;
+  emitPreview(userId: string, preview: Omit<Preview, 'userId'>): void;
 };
 
 export const room = (kind: 'conversation' | 'user', id: string) => `${kind}:${id}`;

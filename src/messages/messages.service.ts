@@ -82,6 +82,97 @@ export class MessagesService {
     return this.persist(viewer, conversationId, { type: 'text', text, replyTo: dto.replyTo });
   }
 
+  async sendSystem(conversationId: string, senderId: string | null, text: string) {
+    const value = stripHtml(text);
+    if (!value) return null;
+    const conversation = await this.conversations.getById(conversationId);
+    if (!conversation) return null;
+    const row = await this.messages.create({
+      conversation: oid(conversationId),
+      sender: senderId ? oid(senderId) : null,
+      type: 'system',
+      text: value,
+      receipts: senderId ? [{ user: oid(senderId), status: 'sent', at: new Date() }] : [],
+    });
+    const bumped = await this.conversations.bumpFromMessage(conversationId, {
+      senderId: senderId ?? '',
+      preview: value,
+      previewIcon: null,
+      messageId: row.id,
+    });
+    const live = bumped ?? conversation;
+    const message = await this.mapOne(row, live, await this.people([row], live));
+    const conversationKey = String(live.id ?? live._id);
+    this.live?.emitNew(
+      conversationKey,
+      message,
+      this.conversations.activeMemberIds(live).map((userId) => ({
+        userId,
+        conversationId: conversationKey,
+        preview: viewerPreview(value, message.senderId, userId),
+        previewIcon: null,
+        lastMessageAt: (live.lastMessageAt ?? new Date()).toISOString(),
+        unread: this.conversations.unreadOf(live, userId),
+      })),
+    );
+    return message;
+  }
+
+  async sendCallLog(
+    conversationId: string,
+    senderId: string,
+    input: { callId: string; missed: boolean; label: string; meta: string },
+  ) {
+    const conversation = await this.conversations.getById(conversationId);
+    if (!conversation) return null;
+    const row = await this.messages.create({
+      conversation: oid(conversationId),
+      sender: oid(senderId),
+      type: 'call',
+      text: input.label,
+      callId: oid(input.callId),
+      callMeta: { kind: 'call', missed: input.missed, label: input.label, meta: input.meta, callId: input.callId },
+      receipts: [{ user: oid(senderId), status: 'sent', at: new Date() }],
+    });
+    const bumped = await this.conversations.bumpFromMessage(conversationId, {
+      senderId,
+      preview: input.label,
+      previewIcon: null,
+      messageId: row.id,
+    });
+    const live = bumped ?? conversation;
+    const message = await this.mapOne(row, live, await this.people([row], live));
+    const conversationKey = String(live.id ?? live._id);
+    this.live?.emitNew(
+      conversationKey,
+      message,
+      this.conversations.activeMemberIds(live).map((userId) => ({
+        userId,
+        conversationId: conversationKey,
+        preview: viewerPreview(input.label, message.senderId, userId),
+        previewIcon: null,
+        lastMessageAt: (live.lastMessageAt ?? new Date()).toISOString(),
+        unread: this.conversations.unreadOf(live, userId),
+      })),
+    );
+    return message;
+  }
+
+  async updateCallLog(callId: string, input: { missed: boolean; label: string; meta: string; preview: string }) {
+    if (!isMongoId(callId)) return null;
+    const row = await this.messages.findOne({ callId: oid(callId), type: 'call' }).exec();
+    if (!row) return null;
+    row.text = input.label;
+    row.callMeta = { kind: 'call', missed: input.missed, label: input.label, meta: input.meta, callId };
+    await row.save();
+    await this.conversations.bumpPreview(String(row.conversation), {
+      preview: input.preview,
+      lastMessageAt: new Date(),
+      senderId: row.sender ? String(row.sender) : null,
+    });
+    return this.touch(row, row.sender ? String(row.sender) : '');
+  }
+
   async toggleReaction(viewer: AuthViewer, messageId: string, emoji: string) {
     const value = emoji.trim();
     if (!value || value.length > 8 || /[<>]/.test(value)) throw new BadRequestException({ error: 'Pick a valid emoji' });
@@ -308,9 +399,13 @@ export class MessagesService {
     return {
       id: row.id,
       conversationId: String(row.conversation),
-      kind: 'message',
+      kind: row.type === 'call' ? 'call' : 'message',
       senderId,
       type: row.type as MessageType,
+      missed: row.callMeta?.missed,
+      label: row.callMeta?.label ?? (row.type === 'call' ? row.text : undefined),
+      meta: row.callMeta?.meta,
+      callId: row.callId ? String(row.callId) : undefined,
       text: row.text ?? '',
       caption: row.caption ?? '',
       fileName: row.media?.fileName ?? '',
@@ -364,6 +459,7 @@ function duration(seconds = 0) {
 }
 
 function snippet(type: string, text: string, fileName?: string, seconds?: number) {
+  if (type === 'call') return text || 'Call';
   if (type === 'voice') return `Voice message · ${duration(seconds)}`;
   if (type === 'video_note') return `Video note · ${duration(seconds)}`;
   if (type === 'image') return 'Photo';

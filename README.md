@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, and Messages (REST + Socket.IO) are implemented; calls and contacts come later.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, and Calls (WebRTC signaling, not an SFU) are implemented; contacts come later.
 
 ## Setup
 
@@ -168,6 +168,48 @@ curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSA
 curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/read
 ```
 
+## Groups examples
+
+Membership after a group exists (`POST /api/conversations/groups` stays on Conversations). Direct chats return 400. Create-time `MIN_GROUP_MEMBERS = 3` is not re-checked after people leave. If the last remaining member leaves, the conversation stays in Mongo with zero active members (no `archivedAt`); list/`GET :id` is 404 for former members.
+
+List members (you first, then admins, then name):
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/conversations/CONVERSATION_ID/members
+```
+
+Add people (admin; 201 if anyone new joined, otherwise 200):
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/members \
+  -H 'Content-Type: application/json' \
+  -d '{"userIds":["64a000000000000000000005"]}'
+```
+
+Make admin / remove admin (admin; cannot change your own role here):
+
+```bash
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSATION_ID/members/USER_ID/admin \
+  -H 'Content-Type: application/json' \
+  -d '{"isAdmin":true}'
+
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSATION_ID/members/USER_ID/admin \
+  -H 'Content-Type: application/json' \
+  -d '{"isAdmin":false}'
+```
+
+Remove a member (admin; cannot remove yourself — leave instead):
+
+```bash
+curl -s -b cookies.txt -X DELETE http://localhost:5000/api/conversations/CONVERSATION_ID/members/USER_ID
+```
+
+Leave (any member). If you are the last admin and others remain, the longest-tenured remaining member is promoted first:
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/leave
+```
+
 ## Messages examples
 
 List a thread (oldest → newest in the page). `view=pinned` filters pins; `q` searches text, caption, and file name:
@@ -205,7 +247,40 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSAT
 curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/seen
 ```
 
-REST history DTOs include `dir` (`in` | `out`) relative to you. Socket payloads are canonical: same fields, plus `senderId` instead of `dir`. Map locally with `dir = message.senderId === me ? "out" : "in"`. Reaction objects on the socket may include `userIds` so the client can set `mine`.
+REST history DTOs include `dir` (`in` | `out`) relative to you. Socket payloads are canonical: same fields, plus `senderId` instead of `dir`. Map locally with `dir = message.senderId === me ? "out" : "in"`. Reaction objects on the socket may include `userIds` so the client can set `mine`. Call chips in the thread use `kind: "call"` with `missed`, `label`, `meta`, and `callId`.
+
+## Calls examples
+
+Nest is the signaling server only (STUN from env, optional TURN). Media is WebRTC peer-to-peer; group calls mesh in the same socket room. Ring timeout is `CALL_RING_TIMEOUT_MS` (default 35s) → `missed`. History sections use `startedAt` in UTC unless you pass `tz` (IANA). One ringing/active call per user; a second start is `409 Already in a call`.
+
+Start (201). Callees get `call:incoming`:
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/calls \
+  -H 'Content-Type: application/json' \
+  -d '{"conversationId":"CONVERSATION_ID","type":"video"}'
+```
+
+Accept / decline / end:
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/calls/CALL_ID/accept
+curl -s -b cookies.txt -X POST http://localhost:5000/api/calls/CALL_ID/decline
+curl -s -b cookies.txt -X POST http://localhost:5000/api/calls/CALL_ID/end \
+  -H 'Content-Type: application/json' \
+  -d '{"ice":"p2p"}'
+```
+
+Live call, history (`filter=all|missed|voice|video`), and connection-quality card:
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/calls/CALL_ID
+curl -s -b cookies.txt 'http://localhost:5000/api/calls?filter=all&limit=50'
+curl -s -b cookies.txt 'http://localhost:5000/api/calls?filter=missed&tz=Asia/Dhaka'
+curl -s -b cookies.txt http://localhost:5000/api/calls/quality
+```
+
+Frontend flow: `POST /api/calls` → callee overlay on `call:incoming` → `POST accept` → `/call?type=&callId=` → both `call:join` and exchange `webrtc:offer` / `webrtc:answer` / `webrtc:ice` → `POST end`.
 
 ## Socket.IO
 
@@ -235,12 +310,26 @@ socket.on("message:new", handler)
 | | | `message:updated` | `{ message }` pin / reaction |
 | | | `message:deleted` | `{ id, conversationId, scope: "me" \| "everyone" }` |
 | | | `conversation:preview` | `{ conversationId, preview, previewIcon, lastMessageAt, unread }` to `user:{id}` |
+| | | `group:updated` | `{ conversationId, members, status, sub }` to the thread and each member’s `user:{id}` |
+| | | `group:member-left` | `{ conversationId, userId, reason: "left" \| "removed" }` |
+| | | `conversation:removed` | `{ conversationId }` to the leaver / kicked user’s `user:{id}` (drop from the sidebar) |
+| `call:join` | `{ callId }` | `call:incoming` | `{ call }` CallDto to each callee’s `user:{id}` |
+| `call:leave` | `{ callId }` | `call:accepted` | `{ callId, userId }` |
+| `webrtc:offer` | `{ callId, toUserId, sdp }` | `webrtc:offer` | forwarded to `user:{toUserId}` (SDP not stored) |
+| `webrtc:answer` | `{ callId, toUserId, sdp }` | `webrtc:answer` | same |
+| `webrtc:ice` | `{ callId, toUserId, candidate }` | `webrtc:ice` | same |
+| `call:media` | `{ callId, muted?, cameraOff? }` | `call:media` | UI-only, call room |
+| | | `call:declined` | `{ callId, userId }` |
+| | | `call:ended` | `{ callId, status, durationSec }` |
+| | | `call:missed` | `{ callId }` after ring timeout or caller hangup while ringing |
+| | | `call:participant` | `{ callId, userId, action: "joined" \| "left" }` |
+| | | `call:started` | `{ conversationId, callId }` on the thread room |
 
-Rooms: `conversation:{conversationId}` (open thread) and `user:{userId}` (sidebar unread / preview). Upload media with REST; the server broadcasts `message:new`. Text can go through REST or `message:send` — both use `MessagesService.send`.
+Rooms: `conversation:{conversationId}` (open thread), `user:{userId}` (sidebar / incoming ring), and `call:{callId}` after `call:join`. Upload media with REST; the server broadcasts `message:new`. Text can go through REST or `message:send` — both use `MessagesService.send`.
 
 ## Env
 
-See `.env.example` for `PORT`, `FRONTEND_URL`, `API_URL`, Mongo, Redis, JWT/session secrets, Google, GitHub, SMTP, and Cloudinary.
+See `.env.example` for `PORT`, `FRONTEND_URL`, `API_URL`, Mongo, Redis, JWT/session secrets, Google, GitHub, SMTP, Cloudinary, `STUN_URL`, optional `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL`, and `CALL_RING_TIMEOUT_MS`.
 
 ## Tests
 
