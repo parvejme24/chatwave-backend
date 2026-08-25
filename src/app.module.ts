@@ -37,6 +37,7 @@ import { NotificationsModule } from './notifications/notifications.module';
         uri: config.get('MONGODB_URI', { infer: true }),
         dbName: config.get('DB_NAME', { infer: true }),
         family: 4,
+        autoSelectFamily: false,
         serverSelectionTimeoutMS: 10000,
       }),
     }),
