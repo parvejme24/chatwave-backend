@@ -1,0 +1,87 @@
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
+import type { Response } from 'express';
+
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost): void {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+
+    if (response.headersSent) {
+      return;
+    }
+
+    const { status, error } = this.normalize(exception);
+    if (status >= 500) {
+      const message =
+        exception instanceof Error ? exception.message : 'Unknown error';
+      this.logger.error(message);
+    }
+
+    response.status(status).json({ error });
+  }
+
+  private normalize(exception: unknown): { status: number; error: string } {
+    if (
+      exception &&
+      typeof exception === 'object' &&
+      'name' in exception &&
+      exception.name === 'MulterError'
+    ) {
+      const code =
+        'code' in exception && typeof exception.code === 'string'
+          ? exception.code
+          : '';
+      if (code === 'LIMIT_FILE_SIZE') {
+        return { status: HttpStatus.BAD_REQUEST, error: 'Keep the photo under 2 MB' };
+      }
+      return { status: HttpStatus.BAD_REQUEST, error: 'Could not upload that file' };
+    }
+
+    if (exception instanceof HttpException) {
+      return {
+        status: exception.getStatus(),
+        error: this.messageFromHttp(exception),
+      };
+    }
+
+    return {
+      status: HttpStatus.INTERNAL_SERVER_ERROR,
+      error: 'Something went wrong',
+    };
+  }
+
+  private messageFromHttp(exception: HttpException): string {
+    const payload = exception.getResponse();
+    if (typeof payload === 'string' && payload.trim()) {
+      return payload;
+    }
+
+    if (payload && typeof payload === 'object') {
+      const record = payload as {
+        error?: unknown;
+        message?: unknown;
+      };
+      if (typeof record.error === 'string' && record.error.trim()) {
+        return record.error;
+      }
+      if (typeof record.message === 'string' && record.message.trim()) {
+        return record.message;
+      }
+      if (Array.isArray(record.message) && typeof record.message[0] === 'string') {
+        return record.message[0];
+      }
+    }
+
+    return exception.message || 'Request failed';
+  }
+}
