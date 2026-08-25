@@ -9,6 +9,7 @@ import { CloudinaryModule } from './common/cloudinary/cloudinary.module';
 import { MailModule } from './common/mail/mail.module';
 import { RedisModule } from './common/redis/redis.module';
 import { AppEnv, validateEnv } from './config/env.validation';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AppEnv, validateEnv } from './config/env.validation';
     RedisModule,
     MailModule,
     CloudinaryModule,
+    UsersModule,
     AuthModule,
   ],
   controllers: [AppController],

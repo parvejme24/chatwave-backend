@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS auth API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`).
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth and Users are implemented; chats, groups, and calls come later.
 
 ## Setup
 
@@ -26,7 +26,7 @@ DB_NAME=chatwave-db
 
 ### Redis
 
-Sessions and password-reset OTPs live in Redis, not MongoDB.
+Sessions, password-reset OTPs, and live presence live in Redis, not MongoDB.
 
 ```bash
 docker run -d --name chatwave-redis -p 6379:6379 redis:7
@@ -94,6 +94,45 @@ Logout:
 ```bash
 curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:5000/api/auth/logout
 ```
+
+## Users examples
+
+Current profile (settings screen):
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/users/me
+```
+
+Update name, username, role, location, or avatar tone:
+
+```bash
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/users/me \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Md Parvej","username":"parvej","role":"Full-stack developer","location":"Dhaka","tone":"a"}'
+```
+
+Search people (Contacts + create-group picker):
+
+```bash
+curl -s -b cookies.txt 'http://localhost:5000/api/users/search?q=nadia&limit=20'
+```
+
+Heartbeat / presence (`online`, `away`, or `offline`):
+
+```bash
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/users/me/presence \
+  -H 'Content-Type: application/json' \
+  -d '{"presence":"online"}'
+```
+
+Public profile and people currently online:
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/users/online
+curl -s -b cookies.txt http://localhost:5000/api/users/by-username/nadia
+```
+
+`GET /api/auth/me` and `PATCH /api/auth/profile` still work; they call the Users service.
 
 ## Env
 

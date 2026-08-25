@@ -16,6 +16,13 @@ import {
   type SessionRecord,
 } from '../../auth/auth.constants';
 import { AppEnv } from '../../config/env.validation';
+import { type LivePresence } from '../../users/users.constants';
+
+const presenceKey = {
+  live: (id: string) => `presence:${id}`,
+  onlineSet: 'online_users',
+  lastSeen: (id: string) => `presence:seen:${id}`,
+};
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -144,5 +151,52 @@ export class RedisService implements OnModuleDestroy {
     await this.client.del(key);
     if (value === 'google' || value === 'github') return value;
     return null;
+  }
+
+  async setLivePresence(userId: string, presence: LivePresence, ttl: number): Promise<void> {
+    await this.client
+      .multi()
+      .set(presenceKey.live(userId), presence, 'EX', ttl)
+      .sadd(presenceKey.onlineSet, userId)
+      .exec();
+  }
+
+  async clearLivePresence(userId: string): Promise<void> {
+    await this.client
+      .multi()
+      .del(presenceKey.live(userId))
+      .srem(presenceKey.onlineSet, userId)
+      .exec();
+  }
+
+  async getLivePresence(userId: string): Promise<LivePresence | null> {
+    const value = await this.client.get(presenceKey.live(userId));
+    if (value === 'online' || value === 'away') return value;
+    if (value === null) await this.client.srem(presenceKey.onlineSet, userId);
+    return null;
+  }
+
+  async claimLastSeenWrite(userId: string, ttl: number): Promise<boolean> {
+    const result = await this.client.set(presenceKey.lastSeen(userId), '1', 'EX', ttl, 'NX');
+    return result === 'OK';
+  }
+
+  async listOnlineUserIds(): Promise<string[]> {
+    const ids = await this.client.smembers(presenceKey.onlineSet);
+    if (ids.length === 0) return [];
+
+    const pipeline = this.client.pipeline();
+    for (const id of ids) pipeline.get(presenceKey.live(id));
+    const results = await pipeline.exec();
+
+    const live: string[] = [];
+    const stale: string[] = [];
+    ids.forEach((id, index) => {
+      const value = results?.[index]?.[1];
+      if (value === 'online' || value === 'away') live.push(id);
+      else stale.push(id);
+    });
+    if (stale.length > 0) await this.client.srem(presenceKey.onlineSet, ...stale);
+    return live;
   }
 }

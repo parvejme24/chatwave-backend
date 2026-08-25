@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -12,23 +11,15 @@ import bcrypt from 'bcrypt';
 import { Request, Response } from 'express';
 
 import { AuthService } from './auth.service';
-import { User } from './schemas/user.schema';
 import { RedisService } from '../common/redis/redis.service';
 import { MailService } from '../common/mail/mail.service';
-import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
+import { UsersService } from '../users/users.service';
 import { BCRYPT_COST } from './auth.constants';
-
-function mockQuery<T>(value: T) {
-  const query = {
-    select: jest.fn(),
-    exec: jest.fn().mockResolvedValue(value),
-  };
-  query.select.mockReturnValue(query);
-  return query;
-}
+import type { OwnerUser } from '../users/users.constants';
 
 function makeUser(overrides: Record<string, unknown> = {}) {
   return {
+    id: 'user-1',
     _id: { toString: () => 'user-1' },
     name: 'Ayesha Rahman',
     email: 'ayesha@example.com',
@@ -50,13 +41,40 @@ function makeUser(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function ownerPayload(user: ReturnType<typeof makeUser>): OwnerUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    username: user.username,
+    initials: user.initials,
+    tone: user.tone,
+    photoUrl: user.photoUrl,
+    role: user.role,
+    location: user.location,
+    isOwner: Boolean(user.isOwner),
+    presence: 'offline',
+    lastSeenAt: null,
+    status: user.status,
+    providers: { google: false, github: false },
+    settings: { showLastSeen: true, readReceipts: true },
+    createdAt: user.createdAt.toISOString(),
+  };
+}
+
 describe('AuthService', () => {
   let service: AuthService;
-  const userModel = {
-    findOne: jest.fn(),
-    findById: jest.fn(),
-    countDocuments: jest.fn(),
-    create: jest.fn(),
+  const users = {
+    findByEmail: jest.fn(),
+    findByEmailWithPassword: jest.fn(),
+    createLocalUser: jest.fn(),
+    toOwnerPayload: jest.fn(),
+    markOnline: jest.fn(),
+    goOffline: jest.fn(),
+    getMe: jest.fn(),
+    updateMe: jest.fn(),
+    updatePhoto: jest.fn(),
+    findActiveById: jest.fn(),
   };
   const redis = {
     createSession: jest.fn().mockResolvedValue('session-1'),
@@ -77,14 +95,17 @@ describe('AuthService', () => {
     jest.clearAllMocks();
     redis.createSession.mockResolvedValue('session-1');
     jwt.sign.mockReturnValue('access-token');
+    users.toOwnerPayload.mockImplementation(async (user: ReturnType<typeof makeUser>) =>
+      ownerPayload(user),
+    );
+    users.markOnline.mockImplementation(async (user: ReturnType<typeof makeUser>) => user);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
-        { provide: getModelToken(User.name), useValue: userModel },
+        { provide: UsersService, useValue: users },
         { provide: RedisService, useValue: redis },
         { provide: MailService, useValue: mail },
-        { provide: CloudinaryService, useValue: {} },
         { provide: JwtService, useValue: jwt },
         {
           provide: ConfigService,
@@ -108,12 +129,9 @@ describe('AuthService', () => {
 
   describe('register', () => {
     it('creates a user without starting a session', async () => {
-      userModel.findOne.mockReturnValue(mockQuery(null));
-      userModel.countDocuments.mockReturnValue({
-        exec: jest.fn().mockResolvedValue(0),
-      });
+      users.findByEmail.mockResolvedValue(null);
       const created = makeUser({ isOwner: true });
-      userModel.create.mockResolvedValue(created);
+      users.createLocalUser.mockResolvedValue(created);
 
       const result = await service.register({
         name: 'Ayesha Rahman',
@@ -121,7 +139,7 @@ describe('AuthService', () => {
         password: 'password1',
       });
 
-      expect(userModel.create).toHaveBeenCalled();
+      expect(users.createLocalUser).toHaveBeenCalled();
       expect(result.user.email).toBe('ayesha@example.com');
       expect(result.user.isOwner).toBe(true);
       expect(result.user).not.toHaveProperty('passwordHash');
@@ -129,7 +147,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a duplicate email with 409', async () => {
-      userModel.findOne.mockReturnValue(mockQuery(makeUser()));
+      users.findByEmail.mockResolvedValue(makeUser());
 
       await expect(
         service.register({
@@ -151,7 +169,7 @@ describe('AuthService', () => {
     it('returns the user and access token for a valid password', async () => {
       const passwordHash = await bcrypt.hash('password1', BCRYPT_COST);
       const user = makeUser({ passwordHash });
-      userModel.findOne.mockReturnValue(mockQuery(user));
+      users.findByEmailWithPassword.mockResolvedValue(user);
 
       const result = await service.login(
         { email: 'ayesha@example.com', password: 'password1' },
@@ -161,14 +179,15 @@ describe('AuthService', () => {
 
       expect(result.accessToken).toBe('access-token');
       expect(result.user.id).toBe('user-1');
+      expect(users.markOnline).toHaveBeenCalled();
       expect(redis.createSession).toHaveBeenCalled();
       expect(res.cookie).toHaveBeenCalled();
     });
 
     it('rejects a banned account', async () => {
       const passwordHash = await bcrypt.hash('password1', BCRYPT_COST);
-      userModel.findOne.mockReturnValue(
-        mockQuery(makeUser({ passwordHash, status: 'banned' })),
+      users.findByEmailWithPassword.mockResolvedValue(
+        makeUser({ passwordHash, status: 'banned' }),
       );
 
       await expect(
@@ -181,8 +200,8 @@ describe('AuthService', () => {
     });
 
     it('rejects an oauth-only account with no password', async () => {
-      userModel.findOne.mockReturnValue(
-        mockQuery(makeUser({ passwordHash: null, providers: { googleId: 'g1' } })),
+      users.findByEmailWithPassword.mockResolvedValue(
+        makeUser({ passwordHash: null, providers: { googleId: 'g1' } }),
       );
 
       await expect(
@@ -200,7 +219,7 @@ describe('AuthService', () => {
       const otp = '123456';
       const otpHash = await bcrypt.hash(otp, BCRYPT_COST);
       const user = makeUser({ passwordHash: 'old' });
-      userModel.findOne.mockReturnValue(mockQuery(user));
+      users.findByEmailWithPassword.mockResolvedValue(user);
       redis.getOtpHash.mockResolvedValue(otpHash);
 
       const result = await service.resetPassword({
@@ -217,7 +236,7 @@ describe('AuthService', () => {
 
     it('rejects an invalid otp', async () => {
       const otpHash = await bcrypt.hash('999999', BCRYPT_COST);
-      userModel.findOne.mockReturnValue(mockQuery(makeUser()));
+      users.findByEmailWithPassword.mockResolvedValue(makeUser());
       redis.getOtpHash.mockResolvedValue(otpHash);
 
       await expect(

@@ -2,44 +2,37 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   ServiceUnavailableException,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { InjectModel } from '@nestjs/mongoose';
 import bcrypt from 'bcrypt';
 import type { CookieOptions, Request, Response } from 'express';
-import { Model } from 'mongoose';
 
-import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { MailService } from '../common/mail/mail.service';
 import { RedisService } from '../common/redis/redis.service';
 import { AppEnv } from '../config/env.validation';
+import { UsersService } from '../users/users.service';
+import type { UserDocument } from '../users/user.schema';
+import type { UploadedPhoto } from '../users/users.constants';
 import {
   AUTH_COOKIE,
   BCRYPT_COST,
   clientIp,
+  cookieSessionId,
   detectPlatform,
   generateOtp,
-  initialsFromName,
   OTP_MAX,
-  PHOTO_MAX,
-  PHOTO_MIME,
   providerField,
-  PublicUser,
-  randomTone,
   SESSION_TTL,
-  toPublicUser,
-  uniqueSuffix,
-  usernameFromEmail,
   type OAuthProfile,
   type OAuthProvider,
-  type UploadedPhoto,
 } from './auth.constants';
 import { LoginDto, RegisterDto, ResetPasswordDto, UpdateProfileDto } from './auth.dto';
-import { User, UserDocument } from './schemas/user.schema';
 
 export class OAuthFlowError extends Error {
   constructor(message = 'OAuth failed') {
@@ -51,10 +44,9 @@ export class OAuthFlowError extends Error {
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectModel(User.name) private readonly users: Model<UserDocument>,
+    @Inject(forwardRef(() => UsersService)) private readonly users: UsersService,
     private readonly redis: RedisService,
     private readonly mail: MailService,
-    private readonly cloudinary: CloudinaryService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService<AppEnv, true>,
   ) {}
@@ -64,14 +56,15 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
-    if (await this.users.findOne({ email: dto.email }).exec()) {
+    if (await this.users.findByEmail(dto.email)) {
       throw new ConflictException({ error: 'An account with this email already exists' });
     }
-    const user = await this.users.create({
-      ...(await this.newAccount(dto.name, dto.email)),
+    const user = await this.users.createLocalUser({
+      name: dto.name,
+      email: dto.email,
       passwordHash: await bcrypt.hash(dto.password, BCRYPT_COST),
     });
-    return { user: toPublicUser(user) };
+    return { user: await this.users.toOwnerPayload(user) };
   }
 
   async login(dto: LoginDto, req: Request, res: Response) {
@@ -79,7 +72,7 @@ export class AuthService {
   }
 
   async validateLocalUser(email: string, password: string) {
-    const user = await this.users.findOne({ email }).select('+passwordHash').exec();
+    const user = await this.users.findByEmailWithPassword(email);
     if (!user) throw new UnauthorizedException({ error: 'Invalid email or password' });
     this.assertAllowed(user);
     if (!user.passwordHash) {
@@ -98,8 +91,8 @@ export class AuthService {
     if ((await this.redis.incrementOtpCount(email)) > OTP_MAX) {
       throw new BadRequestException({ error: 'Too many reset attempts. Try again later.' });
     }
-    const user = await this.users.findOne({ email, deletedAt: null }).exec();
-    if (user?.status === 'active') {
+    const user = await this.users.findByEmail(email);
+    if (user && user.status === 'active' && !user.deletedAt) {
       const otp = generateOtp();
       await this.redis.setOtpHash(email, await bcrypt.hash(otp, BCRYPT_COST));
       await this.mail.sendPasswordResetOtp(email, otp);
@@ -109,7 +102,7 @@ export class AuthService {
 
   async resetPassword(dto: ResetPasswordDto) {
     const [user, otpHash] = await Promise.all([
-      this.users.findOne({ email: dto.email }).select('+passwordHash').exec(),
+      this.users.findByEmailWithPassword(dto.email),
       this.redis.getOtpHash(dto.email),
     ]);
     if (!user || !otpHash) {
@@ -122,63 +115,34 @@ export class AuthService {
     user.passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
     await user.save();
     await this.redis.deleteOtp(dto.email);
-    await this.redis.deleteAllSessions(user._id.toString());
+    await this.redis.deleteAllSessions(user.id);
     return { ok: true as const };
   }
 
-  async getMe(user: PublicUser, sessionId: string, res: Response) {
-    await this.redis.refreshSession(sessionId, user.id);
+  async getMe(userId: string, sessionId: string, res: Response) {
+    await this.redis.refreshSession(sessionId, userId);
     this.setCookie(res, sessionId);
-    return { user };
+    return this.users.getMe(userId);
   }
 
   async logout(userId: string, sessionId: string, res: Response) {
+    await this.users.goOffline(userId);
     await this.redis.deleteSession(sessionId, userId);
     this.clearCookie(res);
     return { ok: true as const };
   }
 
   async logoutAll(userId: string, res: Response) {
+    await this.users.goOffline(userId);
     await this.redis.deleteAllSessions(userId);
     this.clearCookie(res);
     return { ok: true as const };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto, file?: UploadedPhoto) {
-    const user = await this.users.findById(userId).exec();
-    if (!user) throw new UnauthorizedException({ error: 'Please sign in again' });
-    this.assertAllowed(user);
-
-    if (dto.name) {
-      user.name = dto.name;
-      user.initials = initialsFromName(dto.name);
-    }
-    if (dto.username && dto.username !== user.username) {
-      const taken = await this.users
-        .findOne({ username: dto.username, _id: { $ne: user._id } })
-        .exec();
-      if (taken) throw new ConflictException({ error: 'That username is already taken' });
-      user.username = dto.username;
-    }
-    if (dto.role !== undefined) user.role = dto.role;
-    if (dto.location !== undefined) user.location = dto.location;
-
-    if (file) {
-      if (!PHOTO_MIME.includes(file.mimetype as (typeof PHOTO_MIME)[number])) {
-        throw new BadRequestException({ error: 'Use a JPEG, PNG, or WebP image' });
-      }
-      if (file.size > PHOTO_MAX) {
-        throw new BadRequestException({ error: 'Keep the photo under 2 MB' });
-      }
-      const uploaded = await this.cloudinary.uploadAvatar(file.buffer);
-      const previous = user.photoPublicId;
-      user.photoUrl = uploaded.url;
-      user.photoPublicId = uploaded.publicId;
-      if (previous) await this.cloudinary.deleteAsset(previous);
-    }
-
-    await user.save();
-    return { user: toPublicUser(user) };
+    const updated = await this.users.updateMe(userId, dto);
+    if (!file) return updated;
+    return this.users.updatePhoto(userId, file);
   }
 
   async startOAuthLink(userId: string, provider: OAuthProvider, res: Response) {
@@ -197,23 +161,20 @@ export class AuthService {
       if (intent === profile.provider) return this.linkProvider(sessionUser.id, profile);
     }
 
-    const field = `providers.${providerField(profile.provider)}`;
+    const field = `providers.${providerField(profile.provider)}` as const;
     let user =
-      (await this.users.findOne({ [field]: profile.providerId }).exec()) ??
-      (await this.users.findOne({ email }).exec());
+      (await this.users.findByProvider(field, profile.providerId)) ??
+      (await this.users.findByEmail(email));
 
     if (user) {
       this.assertAllowed(user);
-      this.applyOAuth(user, profile);
-      await user.save();
-      return user;
+      return this.users.applyOAuth(user, profile);
     }
 
-    return this.users.create({
-      ...(await this.newAccount(profile.name || email, email)),
-      passwordHash: null,
+    return this.users.createOAuthUser({
+      name: profile.name || email,
+      email,
       photoUrl: profile.photoUrl ?? null,
-      emailVerifiedAt: new Date(),
       providers: { [providerField(profile.provider)]: profile.providerId },
     });
   }
@@ -240,58 +201,43 @@ export class AuthService {
   }
 
   async findActiveUserById(userId: string) {
-    const user = await this.users.findById(userId).exec();
-    if (!user || user.status === 'banned' || user.deletedAt) return null;
-    return user;
+    return this.users.findActiveById(userId);
   }
 
   private async issueSession(user: UserDocument, req: Request, res: Response) {
     this.assertAllowed(user);
-    user.lastSeenAt = new Date();
-    await user.save();
-    const sessionId = await this.redis.createSession(user._id.toString(), {
+    await this.users.markOnline(user);
+    const sessionId = await this.redis.createSession(user.id, {
       userAgent: req.headers['user-agent'] ?? '',
       ip: clientIp(req.ip, req.headers['x-forwarded-for']),
       platform: detectPlatform(req.headers['user-agent'] ?? ''),
     });
     this.setCookie(res, sessionId);
     return {
-      user: toPublicUser(user),
-      accessToken: this.jwt.sign({ sub: user._id.toString(), sid: sessionId }, { expiresIn: '15m' }),
+      user: await this.users.toOwnerPayload(user),
+      accessToken: this.jwt.sign({ sub: user.id, sid: sessionId }, { expiresIn: '15m' }),
     };
   }
 
   private async linkProvider(userId: string, profile: OAuthProfile) {
-    const user = await this.users.findById(userId).exec();
+    const user = await this.users.findActiveById(userId);
     if (!user) throw new OAuthFlowError('Please sign in again');
     this.assertAllowed(user);
-    const field = `providers.${providerField(profile.provider)}`;
-    const taken = await this.users
-      .findOne({ [field]: profile.providerId, _id: { $ne: user._id } })
-      .exec();
-    if (taken) {
+    const field = `providers.${providerField(profile.provider)}` as const;
+    if (await this.users.providerTaken(field, profile.providerId, user.id)) {
       const label = profile.provider === 'google' ? 'Google' : 'GitHub';
       throw new OAuthFlowError(`This ${label} account is already linked to another ChatWave user`);
     }
-    this.applyOAuth(user, profile);
-    await user.save();
-    return user;
-  }
-
-  private applyOAuth(user: UserDocument, profile: OAuthProfile) {
-    user.providers ??= {};
-    user.providers[providerField(profile.provider)] = profile.providerId;
-    if (!user.photoUrl && profile.photoUrl) user.photoUrl = profile.photoUrl;
-    if (!user.emailVerifiedAt) user.emailVerifiedAt = new Date();
+    return this.users.applyOAuth(user, profile);
   }
 
   private async userFromRequest(req: Request) {
-    const sessionId = (req.cookies as Record<string, string> | undefined)?.[AUTH_COOKIE];
+    const sessionId = cookieSessionId(req);
     if (!sessionId) return null;
     const session = await this.redis.getSession(sessionId);
     if (!session) return null;
-    const user = await this.findActiveUserById(session.userId);
-    return user ? toPublicUser(user) : null;
+    const user = await this.users.findActiveById(session.userId);
+    return user ? { id: user.id, isOwner: Boolean(user.isOwner) } : null;
   }
 
   private cookieOptions(): CookieOptions {
@@ -319,25 +265,5 @@ export class AuthService {
     if (user.status === 'banned') {
       throw new ForbiddenException({ error: 'This account has been banned' });
     }
-  }
-
-  private async newAccount(name: string, email: string) {
-    const trimmed = name.trim();
-    return {
-      name: trimmed,
-      email,
-      username: await this.uniqueUsername(usernameFromEmail(email)),
-      initials: initialsFromName(trimmed),
-      tone: randomTone(),
-      isOwner: (await this.users.countDocuments().exec()) === 0,
-    };
-  }
-
-  private async uniqueUsername(base: string) {
-    for (let i = 0; i < 8; i += 1) {
-      const candidate = i === 0 ? base : `${base}${uniqueSuffix()}`;
-      if (!(await this.users.findOne({ username: candidate }).exec())) return candidate;
-    }
-    return `${base}${Date.now().toString(36)}`;
   }
 }

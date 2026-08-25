@@ -6,7 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
 
-import { PHOTO_FOLDER } from '../../auth/auth.constants';
+import { PHOTO_FOLDER } from '../../users/users.constants';
 import { AppEnv } from '../../config/env.validation';
 
 @Injectable()
@@ -43,13 +43,11 @@ export class CloudinaryService {
         {
           folder: PHOTO_FOLDER,
           resource_type: 'image',
-          transformation: [
-            { width: 512, height: 512, crop: 'fill', gravity: 'auto' },
-          ],
+          transformation: [{ width: 512, height: 512, crop: 'fill' }],
         },
         (error, uploaded) => {
           if (error || !uploaded) {
-            reject(error ?? new Error('Cloudinary upload failed'));
+            reject(toUploadError(error));
             return;
           }
           resolve(uploaded);
@@ -71,4 +69,16 @@ export class CloudinaryService {
       this.logger.warn(`Could not delete Cloudinary asset ${publicId}: ${message}`);
     }
   }
+}
+
+function toUploadError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : error && typeof error === 'object' && 'message' in error
+          ? String((error as { message: unknown }).message)
+          : 'Cloudinary upload failed';
+  return new ServiceUnavailableException({ error: message });
 }

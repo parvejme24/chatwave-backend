@@ -8,7 +8,7 @@ import { Strategy as LocalStrategyBase } from 'passport-local';
 
 import { AppEnv } from '../config/env.validation';
 import { AuthService, OAuthFlowError } from './auth.service';
-import type { UserDocument } from './schemas/user.schema';
+import type { UserDocument } from '../users/user.schema';
 
 @Injectable()
 export class LocalStrategy extends PassportStrategy(LocalStrategyBase) {

@@ -3,18 +3,16 @@ import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsNotEmpty,
-  IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
 
+export { UpdateProfileDto } from '../users/users.dto';
+
 const lower = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.toLowerCase().trim() : value;
-
-const trim = ({ value }: { value: unknown }) =>
-  typeof value === 'string' ? value.trim() : value;
 
 function Email() {
   return applyDecorators(
@@ -71,37 +69,4 @@ export class ResetPasswordDto {
 
   @Password(8)
   password!: string;
-}
-
-export class UpdateProfileDto {
-  @IsOptional()
-  @Transform(trim)
-  @IsString()
-  @MinLength(2, { message: 'Enter your name' })
-  @MaxLength(60, { message: 'Name is too long' })
-  name?: string;
-
-  @IsOptional()
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim().replace(/^@/, '').toLowerCase() : value,
-  )
-  @IsString()
-  @MinLength(2, { message: 'Username is too short' })
-  @MaxLength(32, { message: 'Username is too long' })
-  @Matches(/^[a-z0-9._]+$/, {
-    message: 'Username can only use letters, numbers, dots, and underscores',
-  })
-  username?: string;
-
-  @IsOptional()
-  @Transform(trim)
-  @IsString()
-  @MaxLength(80, { message: 'Role is too long' })
-  role?: string;
-
-  @IsOptional()
-  @Transform(trim)
-  @IsString()
-  @MaxLength(80, { message: 'Location is too long' })
-  location?: string;
 }

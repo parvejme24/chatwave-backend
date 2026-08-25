@@ -1,31 +1,33 @@
 import {
   CanActivate,
   ExecutionContext,
+  Inject,
   Injectable,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 
 import { RedisService } from '../../common/redis/redis.service';
-import { AUTH_COOKIE, toPublicUser } from '../auth.constants';
-import { AuthService } from '../auth.service';
+import { UsersService } from '../../users/users.service';
+import { AUTH_COOKIE } from '../auth.constants';
 import { AuthedRequest } from '../decorators/current-user.decorator';
 
 @Injectable()
 export class SessionGuard implements CanActivate {
   constructor(
     private readonly redis: RedisService,
-    private readonly auth: AuthService,
+    @Inject(forwardRef(() => UsersService)) private readonly users: UsersService,
     private readonly jwt: JwtService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<Request & AuthedRequest>();
     const { sessionId, userId } = await this.resolve(request);
-    const user = await this.auth.findActiveUserById(userId);
+    const user = await this.users.findActiveById(userId);
     if (!user) throw new UnauthorizedException({ error: 'Please sign in again' });
-    request.authUser = toPublicUser(user);
+    request.authUser = { id: user.id, isOwner: Boolean(user.isOwner) };
     request.sessionId = sessionId;
     return true;
   }

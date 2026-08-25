@@ -16,7 +16,9 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { NextFunction, Request, Response } from 'express';
 import passport from 'passport';
 
-import { PHOTO_MAX, type OAuthProvider, type PublicUser, type UploadedPhoto } from './auth.constants';
+import type { UserDocument } from '../users/user.schema';
+import type { AuthViewer, UploadedPhoto } from '../users/users.constants';
+import { PHOTO_MAX, type OAuthProvider } from './auth.constants';
 import {
   ForgotPasswordDto,
   LoginDto,
@@ -27,7 +29,6 @@ import {
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { SessionGuard } from './guards/session.guard';
-import type { UserDocument } from './schemas/user.schema';
 
 @Controller('auth')
 export class AuthController {
@@ -79,18 +80,18 @@ export class AuthController {
   @Get('me')
   @UseGuards(SessionGuard)
   me(
-    @CurrentUser() user: PublicUser,
+    @CurrentUser() user: AuthViewer,
     @CurrentUser('sessionId') sessionId: string,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.auth.getMe(user, sessionId, res);
+    return this.auth.getMe(user.id, sessionId, res);
   }
 
   @Post('logout')
   @HttpCode(200)
   @UseGuards(SessionGuard)
   logout(
-    @CurrentUser() user: PublicUser,
+    @CurrentUser() user: AuthViewer,
     @CurrentUser('sessionId') sessionId: string,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -100,7 +101,7 @@ export class AuthController {
   @Post('logout-all')
   @HttpCode(200)
   @UseGuards(SessionGuard)
-  logoutAll(@CurrentUser() user: PublicUser, @Res({ passthrough: true }) res: Response) {
+  logoutAll(@CurrentUser() user: AuthViewer, @Res({ passthrough: true }) res: Response) {
     return this.auth.logoutAll(user.id, res);
   }
 
@@ -108,7 +109,7 @@ export class AuthController {
   @UseGuards(SessionGuard)
   @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: PHOTO_MAX } }))
   updateProfile(
-    @CurrentUser() user: PublicUser,
+    @CurrentUser() user: AuthViewer,
     @Body() dto: UpdateProfileDto,
     @UploadedFile() file?: UploadedPhoto,
   ) {
@@ -117,13 +118,13 @@ export class AuthController {
 
   @Post('link/google')
   @UseGuards(SessionGuard)
-  linkGoogle(@CurrentUser() user: PublicUser, @Res() res: Response) {
+  linkGoogle(@CurrentUser() user: AuthViewer, @Res() res: Response) {
     return this.auth.startOAuthLink(user.id, 'google', res);
   }
 
   @Post('link/github')
   @UseGuards(SessionGuard)
-  linkGithub(@CurrentUser() user: PublicUser, @Res() res: Response) {
+  linkGithub(@CurrentUser() user: AuthViewer, @Res() res: Response) {
     return this.auth.startOAuthLink(user.id, 'github', res);
   }
 

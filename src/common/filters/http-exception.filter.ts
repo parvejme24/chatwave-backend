@@ -22,9 +22,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     const { status, error } = this.normalize(exception);
     if (status >= 500) {
-      const message =
-        exception instanceof Error ? exception.message : 'Unknown error';
-      this.logger.error(message);
+      this.logger.error(this.stringify(exception));
     }
 
     response.status(status).json({ error });
@@ -83,5 +81,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
 
     return exception.message || 'Request failed';
+  }
+
+  private stringify(exception: unknown) {
+    if (exception instanceof Error) return exception.message;
+    try {
+      return JSON.stringify(exception);
+    } catch {
+      return 'Unknown error';
+    }
   }
 }

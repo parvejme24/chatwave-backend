@@ -1,9 +1,9 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 
-import type { PublicUser } from '../auth.constants';
+import type { AuthViewer } from '../../users/users.constants';
 
 export type AuthedRequest = {
-  authUser: PublicUser;
+  authUser: AuthViewer;
   sessionId: string;
 };
 

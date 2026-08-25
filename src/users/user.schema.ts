@@ -1,16 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-import { PRESENCE, STATUSES, TONES } from '../auth.constants';
-
-@Schema({ _id: false })
-export class UserProviders {
-  @Prop({ type: String })
-  googleId?: string;
-
-  @Prop({ type: String })
-  githubId?: string;
-}
+import { PRESENCE, STATUSES, TONES } from './users.constants';
 
 @Schema({ timestamps: true, collection: 'users' })
 export class User {
@@ -20,7 +11,7 @@ export class User {
   @Prop({ required: true, unique: true, lowercase: true, trim: true })
   email: string;
 
-  @Prop({ required: true, unique: true, lowercase: true, trim: true })
+  @Prop({ required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24, match: /^[a-z0-9._]+$/ })
   username: string;
 
   @Prop({ type: String, select: false, default: null })
@@ -59,11 +50,17 @@ export class User {
   @Prop({ type: Date, default: null })
   deletedAt: Date | null;
 
-  @Prop({ type: UserProviders, default: () => ({}) })
-  providers: UserProviders;
+  @Prop({ type: { googleId: String, githubId: String }, default: () => ({}) })
+  providers: { googleId?: string; githubId?: string };
 
   @Prop({ type: Date, default: null })
   emailVerifiedAt: Date | null;
+
+  @Prop({
+    type: { showLastSeen: Boolean, readReceipts: Boolean },
+    default: () => ({ showLastSeen: true, readReceipts: true }),
+  })
+  settings: { showLastSeen: boolean; readReceipts: boolean };
 
   createdAt: Date;
   updatedAt: Date;
@@ -73,11 +70,6 @@ export type UserDocument = HydratedDocument<User>;
 export const UserSchema = SchemaFactory.createForClass(User);
 
 UserSchema.index({ status: 1, deletedAt: 1 });
-UserSchema.index(
-  { 'providers.googleId': 1 },
-  { unique: true, sparse: true },
-);
-UserSchema.index(
-  { 'providers.githubId': 1 },
-  { unique: true, sparse: true },
-);
+UserSchema.index({ name: 'text', username: 'text' });
+UserSchema.index({ 'providers.googleId': 1 }, { unique: true, sparse: true });
+UserSchema.index({ 'providers.githubId': 1 }, { unique: true, sparse: true });
