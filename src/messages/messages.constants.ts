@@ -44,6 +44,16 @@ export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 export type DeleteScope = 'me' | 'everyone';
 export type UploadedChatFile = { buffer: Buffer; mimetype: string; size: number; originalname?: string };
 
+export type ReceiptViewer = {
+  id: string;
+  name: string;
+  username: string;
+  initials: string;
+  tone: string;
+  photoUrl: string | null;
+  at: string;
+};
+
 export type CanonicalMessage = {
   id: string;
   conversationId: string;
@@ -63,6 +73,7 @@ export type CanonicalMessage = {
   mediaUrl: string;
   time: string;
   status: ReceiptStatus | null;
+  seenBy: ReceiptViewer[];
   sender: {
     id: string;
     name: string;
@@ -121,6 +132,42 @@ export function isMongoId(id: string) {
 
 export function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+export function seenByFromReceipts(
+  receipts: Array<{ user: { toString(): string } | string; status: string; at?: Date }>,
+  senderId: string | null,
+  people: Map<
+    string,
+    {
+      id: string;
+      name: string;
+      username: string;
+      initials: string;
+      tone: string;
+      photoUrl?: string | null;
+    }
+  >,
+): ReceiptViewer[] {
+  const seen: ReceiptViewer[] = [];
+  for (const receipt of receipts) {
+    if (receipt.status !== 'seen') continue;
+    const id = String(receipt.user);
+    if (senderId && id === senderId) continue;
+    const person = people.get(id);
+    if (!person) continue;
+    seen.push({
+      id,
+      name: person.name,
+      username: person.username,
+      initials: person.initials,
+      tone: person.tone,
+      photoUrl: person.photoUrl ?? null,
+      at: (receipt.at ?? new Date()).toISOString(),
+    });
+  }
+  seen.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  return seen;
 }
 
 export function toViewerDto(message: CanonicalMessage, viewerId: string): MessageDto {

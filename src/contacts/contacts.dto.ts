@@ -1,5 +1,5 @@
-import { Transform } from 'class-transformer';
-import { IsIn, IsMongoId, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsIn, IsInt, IsMongoId, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 
 import { PRESENCE } from '../users/users.constants';
 
@@ -7,7 +7,7 @@ const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? val
 
 export class AddContactDto {
   @ValidateIf((dto: AddContactDto) => !dto.username)
-  @IsMongoId({ message: 'Pick someone to add' })
+  @IsMongoId({ message: 'Pick someone to follow' })
   userId?: string;
 
   @ValidateIf((dto: AddContactDto) => !dto.userId)
@@ -45,4 +45,11 @@ export class ListContactsDto {
   @IsOptional()
   @IsIn(PRESENCE)
   presence?: (typeof PRESENCE)[number];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 50;
 }

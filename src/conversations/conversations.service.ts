@@ -100,6 +100,28 @@ export class ConversationsService {
     return [...new Set(ids)];
   }
 
+  async hideDirectIfEmpty(userId: string, peerId: string) {
+    if (!isMongoId(userId) || !isMongoId(peerId)) return false;
+    const row = await this.conversations.findOne({ type: 'direct', pairKey: pairKey(userId, peerId) }).exec();
+    if (!row || row.lastMessage) return false;
+    const mine = activeMember(row, userId);
+    if (!mine) return false;
+    mine.leftAt = new Date();
+    await row.save();
+    return true;
+  }
+
+  async hideForViewer(viewer: AuthViewer, id: string) {
+    const { row, mine } = await this.requireMine(viewer.id, id);
+    mine.leftAt = new Date();
+    await row.save();
+    const peerId =
+      row.type === 'direct'
+        ? row.members.map((member) => String(member.user)).find((userId) => userId !== viewer.id)
+        : undefined;
+    return { ok: true as const, peerId };
+  }
+
   async createDirect(viewer: AuthViewer, otherId: string) {
     if (otherId === viewer.id) throw new BadRequestException({ error: 'You cannot start a chat with yourself' });
     await this.blocks?.assertNotBlocked(viewer.id, otherId);

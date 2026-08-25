@@ -14,7 +14,12 @@ export class ContactsController {
 
   @Get()
   list(@CurrentUser() viewer: AuthViewer, @Query() query: ListContactsDto) {
-    return this.contacts.list(viewer, query.q, query.presence);
+    return this.contacts.list(viewer, query.q, query.presence, query.limit);
+  }
+
+  @Get('following')
+  following(@CurrentUser() viewer: AuthViewer, @Query() query: ListContactsDto) {
+    return this.contacts.listFollowing(viewer, query.q, query.presence);
   }
 
   @Get('online')
@@ -48,6 +53,17 @@ export class ContactsController {
   @HttpCode(200)
   remove(@CurrentUser() viewer: AuthViewer, @Param('personId') personId: string) {
     return this.contacts.remove(viewer, personId);
+  }
+
+  @Post(':personId/follow')
+  async follow(
+    @CurrentUser() viewer: AuthViewer,
+    @Param('personId') personId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { created, contact } = await this.contacts.follow(viewer, personId);
+    res.status(created ? 201 : 200);
+    return { contact };
   }
 
   @Post(':personId/chat')

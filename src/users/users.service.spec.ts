@@ -12,6 +12,7 @@ function q<T>(value: T) {
   const query = { select: jest.fn(), limit: jest.fn(), exec: jest.fn().mockResolvedValue(value) };
   query.select.mockReturnValue(query);
   query.limit.mockReturnValue(query);
+  query.sort = jest.fn().mockReturnValue(query);
   return query;
 }
 

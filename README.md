@@ -173,36 +173,42 @@ curl -s -b cookies.txt http://localhost:5000/api/users/by-username/nadia
 
 ## Contacts examples
 
-Saved people (`owner` → `person` rows). `GET /api/users/search` still finds people to add; this list is only contacts you saved. Banned and deleted users are hidden. Sorted by name.
+Contacts is a **people directory** plus **follow**. New users see everyone in the database (name, photo, online/offline) except themselves, blocked accounts, and people they already follow.
 
-List (optional `q` name/username, `presence=online|away|offline`). `total` / `onlineCount` are the unfiltered address book so the Online now subtitle can show “3 of 24”:
+Follow someone to put them on your chat list and start a DM. Unfollow hides an empty chat; if you already exchanged messages, the conversation stays until you delete it. Deleting a conversation also unfollows.
+
+People to follow (`GET /api/contacts`). Optional `q`, `presence=online|away|offline`, `limit`:
 
 ```bash
 curl -s -b cookies.txt 'http://localhost:5000/api/contacts'
 curl -s -b cookies.txt 'http://localhost:5000/api/contacts?q=nadia'
 curl -s -b cookies.txt http://localhost:5000/api/contacts/online
+curl -s -b cookies.txt http://localhost:5000/api/contacts/following
 ```
 
-Add by username (201 if new, 200 if already saved):
+Follow (201 if new, 200 if already following). Opens a direct chat:
 
 ```bash
 curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts \
   -H 'Content-Type: application/json' \
   -d '{"username":"nadia"}'
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts/USER_ID/follow
 ```
 
-Patch note, open a direct chat, delete (idempotent), invite link:
+Unfollow, open chat, delete the conversation (also unfollows):
 
 ```bash
-curl -s -b cookies.txt -X PATCH http://localhost:5000/api/contacts/USER_ID \
-  -H 'Content-Type: application/json' \
-  -d '{"note":"Product designer, Dhaka"}'
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts/USER_ID/chat
-
 curl -s -b cookies.txt -X DELETE http://localhost:5000/api/contacts/USER_ID
-
+curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts/USER_ID/chat
+curl -s -b cookies.txt -X DELETE http://localhost:5000/api/conversations/CONVERSATION_ID
 curl -s -b cookies.txt http://localhost:5000/api/contacts/invite-link
+```
+
+Messages include `seenBy`: who has read the message (`id`, `name`, `username`, `at`). `status` is still `sent` / `delivered` / `seen`. Recipients with `readReceipts` off are not listed.
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/conversations/CONVERSATION_ID/messages
 ```
 
 ## Blocks examples
@@ -369,7 +375,7 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSAT
   -d '{"type":"text","text":"the waveform looks good"}'
 ```
 
-React, pin, or delete (query `scope=me|everyone`, default `me`):
+React, pin, or delete. `scope=me` (default) hides the message **only for you**; the other person still sees it. Anyone in the chat can do that on any message. `scope=everyone` removes it for all members and is allowed only for the sender:
 
 ```bash
 curl -s -b cookies.txt -X POST http://localhost:5000/api/messages/MESSAGE_ID/reactions \
@@ -379,6 +385,7 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/messages/MESSAGE_ID/rea
 curl -s -b cookies.txt -X POST http://localhost:5000/api/messages/MESSAGE_ID/pin
 
 curl -s -b cookies.txt -X DELETE 'http://localhost:5000/api/messages/MESSAGE_ID?scope=me'
+curl -s -b cookies.txt -X DELETE 'http://localhost:5000/api/messages/MESSAGE_ID?scope=everyone'
 ```
 
 Mark delivered / seen (seen also clears unread via the same path as `POST /conversations/:id/read`):

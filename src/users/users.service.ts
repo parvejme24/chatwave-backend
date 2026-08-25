@@ -143,6 +143,35 @@ export class UsersService {
     return { users };
   }
 
+  async findDiscoverable(
+    viewer: AuthViewer,
+    opts: { q?: string; presence?: Presence; limit?: number; excludeIds?: Iterable<string> } = {},
+  ) {
+    const take = Math.min(Math.max(opts.limit || 50, 1), 100);
+    const excluded = new Set([viewer.id, ...[...(opts.excludeIds ?? [])].filter((id) => isMongoId(id))]);
+    const filter: Record<string, unknown> = {
+      _id: { $nin: [...excluded] },
+      status: 'active',
+      deletedAt: null,
+    };
+    const query = opts.q?.trim();
+    if (query) {
+      const rx = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      filter.$or = [{ name: rx }, { username: rx }];
+    }
+    const rows = await this.users.find(filter).sort({ name: 1 }).limit(take * 3).exec();
+    const skip = await this.blocks?.restrictedIds(viewer.id);
+    const users: PublicUser[] = [];
+    for (const row of rows) {
+      if (isManagedUserHidden(row) || skip?.has(row.id) || excluded.has(row.id)) continue;
+      const item = await this.publicUser(viewer, row);
+      if (opts.presence && item.presence !== opts.presence) continue;
+      users.push(item);
+      if (users.length >= take) break;
+    }
+    return users;
+  }
+
   async listOnline(viewer: AuthViewer) {
     const ids = (await this.redis.listOnlineUserIds()).filter(
       (id) => id !== viewer.id && isMongoId(id),

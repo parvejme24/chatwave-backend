@@ -14,7 +14,7 @@ import { CONTACTS_ACTIONS } from '../blocks/blocks.constants';
   imports: [
     MongooseModule.forFeature([{ name: Contact.name, schema: ContactSchema }]),
     UsersModule,
-    ConversationsModule,
+    forwardRef(() => ConversationsModule),
     forwardRef(() => BlocksModule),
     forwardRef(() => AuthModule),
   ],

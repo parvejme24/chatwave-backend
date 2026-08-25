@@ -1,10 +1,11 @@
 import type { Presence, PublicUser } from '../users/users.constants';
 
-export const PICK_SOMEONE = 'Pick someone to add';
-export const CANNOT_ADD_SELF = 'You cannot add yourself';
+export const PICK_SOMEONE = 'Pick someone to follow';
+export const CANNOT_ADD_SELF = 'You cannot follow yourself';
 export const USER_NOT_FOUND = 'User not found';
 export const ACCOUNT_UNAVAILABLE = 'That account is not available';
 export const CONTACT_NOT_FOUND = 'Contact not found';
+export const ALREADY_FOLLOWING = 'You already follow this person';
 
 export type ContactDto = {
   id: string;
@@ -20,6 +21,7 @@ export type ContactDto = {
   hrefChat?: string;
   hrefAudio: string;
   hrefVideo: string;
+  following: boolean;
 };
 
 export function derivedNote(saved: string, person: PublicUser, presence: Presence) {

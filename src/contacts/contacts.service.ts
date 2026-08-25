@@ -15,7 +15,7 @@ import { BlocksService } from '../blocks/blocks.service';
 import { CONTACT_BLOCKED } from '../blocks/blocks.constants';
 import { AppEnv } from '../config/env.validation';
 import { ConversationsService } from '../conversations/conversations.service';
-import { isManagedUserHidden, type AuthViewer, type Presence } from '../users/users.constants';
+import { isManagedUserHidden, type AuthViewer, type Presence, type PublicUser } from '../users/users.constants';
 import { UserDocument } from '../users/user.schema';
 import { UsersService } from '../users/users.service';
 import { Contact, ContactDocument } from './contact.schema';
@@ -41,7 +41,23 @@ export class ContactsService {
     @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
-  async list(viewer: AuthViewer, q?: string, presence?: Presence) {
+  async list(viewer: AuthViewer, q?: string, presence?: Presence, limit = 50) {
+    const following = await this.followedIds(viewer.id);
+    const people = await this.users.findDiscoverable(viewer, {
+      q,
+      presence,
+      limit,
+      excludeIds: following,
+    });
+    const contacts = people.map((person) => this.fromPublic(person, false));
+    return {
+      contacts,
+      total: contacts.length,
+      onlineCount: contacts.filter((item) => item.presence === 'online').length,
+    };
+  }
+
+  async listFollowing(viewer: AuthViewer, q?: string, presence?: Presence) {
     const items = await this.visibleContacts(viewer);
     const query = q?.trim().toLowerCase();
     const contacts = items
@@ -67,10 +83,17 @@ export class ContactsService {
     if (isManagedUserHidden(person)) throw new ForbiddenException({ error: ACCOUNT_UNAVAILABLE });
     await this.blocks?.assertNotBlocked(viewer.id, person.id, CONTACT_BLOCKED);
     const existing = await this.contacts.findOne(pair(viewer.id, person.id)).exec();
-    if (existing) return { created: false, contact: await this.toDto(viewer, person, existing.note) };
+    if (existing) {
+      const { conversation } = await this.conversations.getOrCreateDirect(viewer, person.id);
+      return {
+        created: false,
+        contact: await this.toDto(viewer, person, existing.note, conversation.id),
+      };
+    }
     try {
       const row = await this.contacts.create({ ...pair(viewer.id, person.id), note: dto.note?.trim() ?? '' });
-      return { created: true, contact: await this.toDto(viewer, person, row.note) };
+      const { conversation } = await this.conversations.getOrCreateDirect(viewer, person.id);
+      return { created: true, contact: await this.toDto(viewer, person, row.note, conversation.id) };
     } catch (error) {
       if (!isDuplicate(error)) throw error;
       const row = await this.contacts.findOne(pair(viewer.id, person.id)).exec();
@@ -90,9 +113,21 @@ export class ContactsService {
     return { contact: await this.toDto(viewer, person, row.note) };
   }
 
-  async remove(viewer: AuthViewer, personId: string) {
-    if (isMongoId(personId)) await this.contacts.deleteOne(pair(viewer.id, personId)).exec();
+  async remove(viewer: AuthViewer, personId: string, opts?: { keepChat?: boolean }) {
+    if (isMongoId(personId)) {
+      await this.contacts.deleteOne(pair(viewer.id, personId)).exec();
+      if (!opts?.keepChat) await this.conversations.hideDirectIfEmpty(viewer.id, personId);
+    }
     return { ok: true as const };
+  }
+
+  async follow(viewer: AuthViewer, personId: string) {
+    return this.add(viewer, { userId: personId });
+  }
+
+  async followedIds(ownerId: string) {
+    const rows = await this.contacts.find({ owner: new Types.ObjectId(ownerId) }).select('person').exec();
+    return new Set(rows.map((row) => String(row.person)));
   }
 
   async openChat(viewer: AuthViewer, personId: string) {
@@ -159,7 +194,27 @@ export class ContactsService {
       sub: `@${profile.username} · ${note}`,
       hrefAudio: callHref('audio', profile.name, person.id),
       hrefVideo: callHref('video', profile.name, person.id),
+      following: true,
       ...(chatId ? { hrefChat: `/chats/${chatId}` } : {}),
+    };
+  }
+
+  private fromPublic(person: PublicUser, following: boolean): ContactDto {
+    const note = derivedNote('', person, person.presence as Presence);
+    return {
+      id: person.id,
+      name: person.name,
+      user: person.username,
+      username: person.username,
+      initials: person.initials,
+      tone: person.tone,
+      photoUrl: person.photoUrl,
+      presence: person.presence,
+      note,
+      sub: `@${person.username} · ${note}`,
+      hrefAudio: callHref('audio', person.name, person.id),
+      hrefVideo: callHref('video', person.name, person.id),
+      following,
     };
   }
 }

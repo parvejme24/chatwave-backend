@@ -21,10 +21,12 @@ function q<T>(value: T) {
   const query = {
     sort: jest.fn(),
     limit: jest.fn(),
+    select: jest.fn(),
     exec: jest.fn().mockResolvedValue(value),
   };
   query.sort.mockReturnValue(query);
   query.limit.mockReturnValue(query);
+  query.select.mockReturnValue(query);
   return query;
 }
 
@@ -76,11 +78,13 @@ describe('ContactsService', () => {
     findByUsername: jest.fn(),
     publicUser: jest.fn(),
     livePresence: jest.fn(),
+    findDiscoverable: jest.fn(),
   };
   const conversations = {
     getOrCreateDirect: jest.fn(),
     directIdsFor: jest.fn(),
     listDirectPeerIds: jest.fn(),
+    hideDirectIfEmpty: jest.fn(),
   };
   const config = { get: jest.fn().mockReturnValue('http://localhost:3000') };
 
@@ -108,6 +112,8 @@ describe('ContactsService', () => {
     conversations.directIdsFor.mockResolvedValue(new Map());
     conversations.listDirectPeerIds.mockResolvedValue([]);
     conversations.getOrCreateDirect.mockResolvedValue({ created: true, conversation: { id: CONV } });
+    conversations.hideDirectIfEmpty.mockResolvedValue(false);
+    users.findDiscoverable.mockResolvedValue([]);
     model.deleteOne.mockReturnValue(q({ deletedCount: 1 }));
     const module = await Test.createTestingModule({
       providers: [
@@ -144,25 +150,62 @@ describe('ContactsService', () => {
     expect(model.create).toHaveBeenCalledTimes(1);
   });
 
-  it('searches by name and username', async () => {
-    model.find.mockReturnValue(q([row(B), row(C)]));
-    const byName = await service.list(viewer, 'Hasan');
-    expect(byName.contacts.map((item) => item.id)).toEqual([B]);
-    const byUser = await service.list(viewer, 'farhan');
-    expect(byUser.contacts.map((item) => item.id)).toEqual([C]);
-    expect(byUser.total).toBe(2);
+  it('directory hides people you already follow', async () => {
+    model.find.mockReturnValue(q([row(B)]));
+    users.findDiscoverable.mockResolvedValue([
+      {
+        id: C,
+        name: 'Farhan Ahmed',
+        username: 'farhan',
+        initials: 'FA',
+        tone: 'c',
+        photoUrl: null,
+        role: '',
+        location: '',
+        presence: 'offline',
+        lastSeenAt: null,
+        sub: '',
+      },
+    ]);
+    const result = await service.list(viewer);
+    expect(users.findDiscoverable).toHaveBeenCalledWith(
+      viewer,
+      expect.objectContaining({ excludeIds: expect.any(Set) }),
+    );
+    const excluded = (users.findDiscoverable.mock.calls[0]?.[1] as { excludeIds?: Set<string> } | undefined)
+      ?.excludeIds;
+    expect(excluded?.has(B)).toBe(true);
+    expect(result.contacts.map((item) => item.id)).toEqual([C]);
+    expect(result.contacts[0].following).toBe(false);
   });
 
-  it('excludes banned users from GET list', async () => {
+  it('follow opens a direct chat', async () => {
+    model.findOne.mockReturnValue(q(null));
+    model.create.mockResolvedValue(row(B));
+    const created = await service.add(viewer, { userId: B });
+    expect(created.created).toBe(true);
+    expect(conversations.getOrCreateDirect).toHaveBeenCalledWith(viewer, B);
+    expect(created.contact.hrefChat).toBe(`/chats/${CONV}`);
+  });
+
+  it('unfollow keeps a chat that already has messages', async () => {
+    model.deleteOne.mockReturnValue(q({ deletedCount: 1 }));
+    conversations.hideDirectIfEmpty.mockResolvedValue(false);
+    await expect(service.remove(viewer, B)).resolves.toEqual({ ok: true });
+    expect(conversations.hideDirectIfEmpty).toHaveBeenCalledWith(A, B);
+  });
+
+  it('following list excludes banned users', async () => {
     model.find.mockReturnValue(q([row(B), row(C), row(D)]));
     users.findByIds.mockResolvedValue([
       person(B),
       person(C, { status: 'banned' }),
       person(D, { deletedAt: new Date() }),
     ]);
-    const result = await service.list(viewer);
+    const result = await service.listFollowing(viewer);
     expect(result.contacts.map((item) => item.id)).toEqual([B]);
     expect(result.total).toBe(1);
+    expect(result.contacts[0].following).toBe(true);
   });
 
   it('delete is idempotent', async () => {

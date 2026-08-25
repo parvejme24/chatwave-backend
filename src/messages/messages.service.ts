@@ -26,6 +26,7 @@ import {
   MEDIA,
   TEXT_MAX,
   isMongoId,
+  seenByFromReceipts,
   stripHtml,
   toViewerDto,
   type CanonicalMessage,
@@ -215,11 +216,12 @@ export class MessagesService {
 
   async remove(viewer: AuthViewer, messageId: string, scope: DeleteScope = 'me') {
     const row = await this.load(viewer, messageId, true);
-    const conversation = await this.conversations.assertMember(viewer.id, String(row.conversation));
     if (scope === 'everyone') {
       const mine = row.sender && String(row.sender) === viewer.id;
-      if (!mine && !this.conversations.isGroupAdmin(conversation, viewer.id)) {
-        throw new ForbiddenException({ error: 'You can only delete this for yourself' });
+      if (!mine) {
+        throw new ForbiddenException({
+          error: 'Only the sender can delete this for everyone',
+        });
       }
       row.deletedAt = new Date();
       row.deletedBy = oid(viewer.id);
@@ -414,6 +416,7 @@ export class MessagesService {
     for (const row of rows) {
       if (row.sender) ids.add(String(row.sender));
       for (const reaction of row.reactions) for (const user of reaction.users) ids.add(String(user));
+      for (const receipt of row.receipts) ids.add(String(receipt.user));
     }
     const docs = await this.users.findByIds([...ids].filter((id) => isMongoId(id)));
     return new Map(docs.map((doc) => [doc.id, doc]));
@@ -451,6 +454,7 @@ export class MessagesService {
       mediaUrl: row.media?.url ?? '',
       time: (row.createdAt ?? new Date()).toISOString(),
       status: ticks(row.receipts, senderId, this.conversations.activeMemberIds(conversation)),
+      seenBy: seenByFromReceipts(row.receipts, senderId, people),
       sender: sender
         ? { id: sender.id, name: sender.name, username: sender.username, initials: sender.initials, tone: sender.tone, photoUrl: sender.photoUrl ?? null }
         : null,

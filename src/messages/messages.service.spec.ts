@@ -9,6 +9,7 @@ import { ConversationsService } from '../conversations/conversations.service';
 import { UsersService } from '../users/users.service';
 import { Message } from './message.schema';
 import { MessagesService } from './messages.service';
+import { seenByFromReceipts } from './messages.constants';
 
 const A = '64a000000000000000000001';
 const B = '64a000000000000000000002';
@@ -136,6 +137,14 @@ describe('MessagesService', () => {
     expect(row.deletedFor.map(String)).toContain(A);
   });
 
+  it('lets any member hide someone else’s message from their own list only', async () => {
+    const row = msg({ sender: B });
+    model.findById.mockReturnValue(q(row));
+    await expect(service.remove(viewer, MSG, 'me')).resolves.toEqual({ ok: true });
+    expect(row.deletedAt).toBeNull();
+    expect(row.deletedFor.map(String)).toContain(A);
+  });
+
   it('lets the sender delete a message for everyone', async () => {
     const row = msg();
     model.findById.mockReturnValue(q(row));
@@ -143,7 +152,7 @@ describe('MessagesService', () => {
     expect(row.deletedAt).toBeInstanceOf(Date);
   });
 
-  it('forbids delete-for-everyone when the viewer is not the sender or a group admin', async () => {
+  it('forbids delete-for-everyone when the viewer is not the sender', async () => {
     const row = msg({ sender: B });
     model.findById.mockReturnValue(q(row));
     await expect(service.remove(viewer, MSG, 'everyone')).rejects.toBeInstanceOf(ForbiddenException);
@@ -167,5 +176,31 @@ describe('MessagesService', () => {
     await expect(service.mark(viewer, CONV, 'seen')).resolves.toEqual({ ok: true, updated: 0 });
     expect(model.find).not.toHaveBeenCalled();
     expect(conversations.resetUnread).toHaveBeenCalledWith(CONV, A);
+  });
+
+  it('lists who has seen a message', () => {
+    const at = new Date('2026-08-25T14:12:00.000Z');
+    const seen = seenByFromReceipts(
+      [
+        { user: A, status: 'sent', at },
+        { user: B, status: 'seen', at },
+      ],
+      A,
+      new Map([
+        [A, { id: A, name: 'Ayesha', username: 'ayesha', initials: 'AR', tone: 'a', photoUrl: null }],
+        [B, { id: B, name: 'Nadia Hasan', username: 'nadia', initials: 'NH', tone: 'b', photoUrl: null }],
+      ]),
+    );
+    expect(seen).toEqual([
+      {
+        id: B,
+        name: 'Nadia Hasan',
+        username: 'nadia',
+        initials: 'NH',
+        tone: 'b',
+        photoUrl: null,
+        at: at.toISOString(),
+      },
+    ]);
   });
 });

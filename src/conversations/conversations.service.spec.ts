@@ -112,6 +112,20 @@ describe('ConversationsService', () => {
     expect(row.members[1].pinned).toBe(false);
   });
 
+  it('hides an empty direct chat after unfollow', async () => {
+    const row = convo({ lastMessage: null, save: jest.fn().mockResolvedValue(undefined) });
+    model.findOne.mockReturnValue(q(row));
+    await expect(service.hideDirectIfEmpty(A, B)).resolves.toBe(true);
+    expect(row.members[0].leftAt).toBeInstanceOf(Date);
+  });
+
+  it('keeps a direct chat that already has a message', async () => {
+    const row = convo({ lastMessage: '64c000000000000000000001' });
+    model.findOne.mockReturnValue(q(row));
+    await expect(service.hideDirectIfEmpty(A, B)).resolves.toBe(false);
+    expect(row.save).not.toHaveBeenCalled();
+  });
+
   it('returns 404 when the viewer is not a member', async () => {
     model.findById.mockReturnValue(q(convo({ members: [member(B), member(C)] })));
     await expect(service.getOne(viewer, '64b000000000000000000001')).rejects.toBeInstanceOf(NotFoundException);

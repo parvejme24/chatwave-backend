@@ -1,19 +1,23 @@
 import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  Patch,
-  Post,
-  Query,
-  Res,
-  UseGuards,
+    Body,
+    Controller,
+    Delete,
+    Get,
+    HttpCode,
+    Param,
+    Patch,
+    Post,
+    Query,
+    Res,
+    UseGuards,
+    Inject,
+    forwardRef,
 } from '@nestjs/common';
 import type { Response } from 'express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
+import { ContactsService } from '../contacts/contacts.service';
 import type { AuthViewer } from '../users/users.constants';
 import {
   CreateDirectDto,
@@ -27,7 +31,10 @@ import { ConversationsService } from './conversations.service';
 @Controller('conversations')
 @UseGuards(SessionGuard)
 export class ConversationsController {
-  constructor(private readonly conversations: ConversationsService) {}
+  constructor(
+    private readonly conversations: ConversationsService,
+    @Inject(forwardRef(() => ContactsService)) private readonly contacts: ContactsService,
+  ) {}
 
   @Get()
   list(@CurrentUser() viewer: AuthViewer, @Query() query: ListConversationsDto) {
@@ -69,5 +76,13 @@ export class ConversationsController {
   @HttpCode(200)
   markRead(@CurrentUser() viewer: AuthViewer, @Param('id') id: string) {
     return this.conversations.markRead(viewer, id);
+  }
+
+  @Delete(':id')
+  @HttpCode(200)
+  async remove(@CurrentUser() viewer: AuthViewer, @Param('id') id: string) {
+    const { peerId } = await this.conversations.hideForViewer(viewer, id);
+    if (peerId) await this.contacts.remove(viewer, peerId, { keepChat: true });
+    return { ok: true as const };
   }
 }
