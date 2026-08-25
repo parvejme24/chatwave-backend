@@ -173,11 +173,11 @@ curl -s -b cookies.txt http://localhost:5000/api/users/by-username/nadia
 
 ## Contacts examples
 
-Contacts is a **people directory** plus **follow**. New users see everyone in the database (name, photo, online/offline) except themselves, blocked accounts, and people they already follow.
+Contacts is a **people directory** plus **follow**. `GET /api/contacts` returns every registered user except yourself and blocked accounts. Each row has `following: true|false` so the UI can show Follow or Unfollow.
 
 Follow someone to put them on your chat list and start a DM. Unfollow hides an empty chat; if you already exchanged messages, the conversation stays until you delete it. Deleting a conversation also unfollows.
 
-People to follow (`GET /api/contacts`). Optional `q`, `presence=online|away|offline`, `limit`:
+All people (`GET /api/contacts`) — no follow required to see the list. Optional `q`, `presence=online|away|offline`, `limit` (default 200, max 500). Saved contacts (people you follow) are `GET /api/contacts/following`:
 
 ```bash
 curl -s -b cookies.txt 'http://localhost:5000/api/contacts'

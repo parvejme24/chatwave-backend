@@ -50,6 +50,6 @@ export class ListContactsDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
-  limit = 50;
+  @Max(500)
+  limit = 200;
 }

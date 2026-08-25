@@ -147,7 +147,7 @@ export class UsersService {
     viewer: AuthViewer,
     opts: { q?: string; presence?: Presence; limit?: number; excludeIds?: Iterable<string> } = {},
   ) {
-    const take = Math.min(Math.max(opts.limit || 50, 1), 100);
+    const take = Math.min(Math.max(opts.limit || 50, 1), 500);
     const excluded = new Set([viewer.id, ...[...(opts.excludeIds ?? [])].filter((id) => isMongoId(id))]);
     const filter: Record<string, unknown> = {
       _id: { $nin: [...excluded] },

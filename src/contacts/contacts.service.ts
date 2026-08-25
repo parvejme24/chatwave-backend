@@ -43,13 +43,16 @@ export class ContactsService {
 
   async list(viewer: AuthViewer, q?: string, presence?: Presence, limit = 50) {
     const following = await this.followedIds(viewer.id);
-    const people = await this.users.findDiscoverable(viewer, {
-      q,
-      presence,
-      limit,
-      excludeIds: following,
+    const people = await this.users.findDiscoverable(viewer, { q, presence, limit });
+    const directs = await this.conversations.directIdsFor(
+      viewer.id,
+      people.filter((person) => following.has(person.id)).map((person) => person.id),
+    );
+    const contacts = people.map((person) => {
+      const dto = this.fromPublic(person, following.has(person.id));
+      const chatId = directs.get(person.id);
+      return chatId ? { ...dto, hrefChat: `/chats/${chatId}` } : dto;
     });
-    const contacts = people.map((person) => this.fromPublic(person, false));
     return {
       contacts,
       total: contacts.length,

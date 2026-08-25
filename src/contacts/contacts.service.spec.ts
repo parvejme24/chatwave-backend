@@ -150,9 +150,22 @@ describe('ContactsService', () => {
     expect(model.create).toHaveBeenCalledTimes(1);
   });
 
-  it('directory hides people you already follow', async () => {
+  it('directory lists everyone with a following flag', async () => {
     model.find.mockReturnValue(q([row(B)]));
     users.findDiscoverable.mockResolvedValue([
+      {
+        id: B,
+        name: 'Nadia Hasan',
+        username: 'nadia',
+        initials: 'NH',
+        tone: 'b',
+        photoUrl: null,
+        role: '',
+        location: '',
+        presence: 'online',
+        lastSeenAt: null,
+        sub: '',
+      },
       {
         id: C,
         name: 'Farhan Ahmed',
@@ -167,16 +180,13 @@ describe('ContactsService', () => {
         sub: '',
       },
     ]);
+    conversations.directIdsFor.mockResolvedValue(new Map([[B, CONV]]));
     const result = await service.list(viewer);
-    expect(users.findDiscoverable).toHaveBeenCalledWith(
-      viewer,
-      expect.objectContaining({ excludeIds: expect.any(Set) }),
-    );
-    const excluded = (users.findDiscoverable.mock.calls[0]?.[1] as { excludeIds?: Set<string> } | undefined)
-      ?.excludeIds;
-    expect(excluded?.has(B)).toBe(true);
-    expect(result.contacts.map((item) => item.id)).toEqual([C]);
-    expect(result.contacts[0].following).toBe(false);
+    expect(users.findDiscoverable).toHaveBeenCalledWith(viewer, { q: undefined, presence: undefined, limit: 50 });
+    expect(result.contacts.map((item) => item.id)).toEqual([B, C]);
+    expect(result.contacts[0].following).toBe(true);
+    expect(result.contacts[0].hrefChat).toBe(`/chats/${CONV}`);
+    expect(result.contacts[1].following).toBe(false);
   });
 
   it('follow opens a direct chat', async () => {
