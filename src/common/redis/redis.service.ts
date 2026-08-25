@@ -38,6 +38,7 @@ export class RedisService implements OnModuleDestroy {
       url.startsWith('rediss://') || this.config.get('REDIS_TLS', { infer: true });
 
     this.client = new Redis(url, {
+      family: 4,
       maxRetriesPerRequest: 3,
       ...(tls && !url.startsWith('rediss://') ? { tls: {} } : {}),
     });

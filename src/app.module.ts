@@ -36,6 +36,8 @@ import { NotificationsModule } from './notifications/notifications.module';
       useFactory: (config: ConfigService<AppEnv, true>) => ({
         uri: config.get('MONGODB_URI', { infer: true }),
         dbName: config.get('DB_NAME', { infer: true }),
+        family: 4,
+        serverSelectionTimeoutMS: 10000,
       }),
     }),
     RedisModule,

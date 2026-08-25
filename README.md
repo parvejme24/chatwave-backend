@@ -46,8 +46,38 @@ pnpm start:dev
 
 The API prints `Server is running at http://localhost:5000`.
 
+### Render
+
+Do **not** use `nest start` as the start command. It recompiles TypeScript and OOMs on a small instance.
+
+```
+Build command:  pnpm install --frozen-lockfile --prod=false && pnpm run build
+Start command:  pnpm start
+Health check:   /
+Node:           22
+```
+
+`pnpm start` is `node dist/main`. Local work stays `pnpm start:dev`. Render injects `PORT` — do not set it.
+
+Environment (Dashboard → Environment):
+
+| Variable | Notes |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `FRONTEND_URL` | Exact frontend origin, no trailing slash (`https://your-app.vercel.app`) |
+| `API_URL` | This service’s public URL (`https://your-api.onrender.com`) |
+| `MONGODB_URI` | Atlas connection string |
+| `REDIS_URL` | `rediss://…` for Redis Cloud / Render Redis |
+| `REDIS_TLS` | `true` if the URL is not already `rediss://` |
+| `JWT_SECRET` | ≥ 16 characters |
+| `SESSION_SECRET` | ≥ 16 characters |
+
+Atlas → Network Access: allow `0.0.0.0/0` (or Render outbound IPs). Nest does not bind a port until Mongo connects.
+
 Google callback: `{API_URL}/api/auth/google/callback`  
 GitHub callback: `{API_URL}/api/auth/github/callback`
+
+If the frontend is on another host (for example Vercel), session cookies use `SameSite=None; Secure`. Connect the GitHub repo in Render if logs say it does not have access.
 
 ## Auth examples
 

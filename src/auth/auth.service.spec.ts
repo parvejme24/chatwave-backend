@@ -14,7 +14,7 @@ import { AuthService } from './auth.service';
 import { RedisService } from '../common/redis/redis.service';
 import { MailService } from '../common/mail/mail.service';
 import { UsersService } from '../users/users.service';
-import { BCRYPT_COST } from './auth.constants';
+import { BCRYPT_COST, AUTH_COOKIE } from './auth.constants';
 import type { OwnerUser } from '../users/users.constants';
 
 function makeUser(overrides: Record<string, unknown> = {}) {
@@ -183,7 +183,15 @@ describe('AuthService', () => {
       expect(result.user.id).toBe('user-1');
       expect(users.markOnline).toHaveBeenCalled();
       expect(redis.createSession).toHaveBeenCalled();
-      expect(res.cookie).toHaveBeenCalled();
+      expect(res.cookie).toHaveBeenCalledWith(
+        AUTH_COOKIE,
+        'session-1',
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: false,
+        }),
+      );
     });
 
     it('rejects a banned account', async () => {

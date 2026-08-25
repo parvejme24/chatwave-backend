@@ -62,6 +62,10 @@ const schema = Joi.object({
   CALL_RING_TIMEOUT_MS: Joi.number().integer().min(5000).max(120000).default(35000),
 });
 
+function stripTrailingSlash(value: unknown): unknown {
+  return typeof value === 'string' ? value.replace(/\/+$/, '') : value;
+}
+
 function readString(
   config: Record<string, unknown>,
   ...keys: string[]
@@ -82,6 +86,8 @@ export function validateEnv(config: Record<string, unknown>): AppEnv {
 
   const normalized = {
     ...config,
+    FRONTEND_URL: stripTrailingSlash(config.FRONTEND_URL),
+    API_URL: stripTrailingSlash(config.API_URL),
     REDIS_TLS: redisTls,
     JWT_SECRET: jwtSecret,
     SESSION_SECRET: sessionSecret,

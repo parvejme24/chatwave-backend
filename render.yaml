@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: chatwave-backend
+    runtime: node
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm run build
+    startCommand: pnpm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: DB_NAME
+        value: chatwave-db
+      - key: MONGODB_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+      - key: API_URL
+        sync: false

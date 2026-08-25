@@ -265,13 +265,25 @@ export class AuthService {
   }
 
   private cookieOptions(): CookieOptions {
+    const production = this.get('NODE_ENV') === 'production';
     return {
       httpOnly: true,
-      sameSite: 'lax',
-      secure: this.get('NODE_ENV') === 'production',
+      sameSite: production && this.crossSiteFrontend() ? 'none' : 'lax',
+      secure: production,
       path: '/',
       maxAge: SESSION_TTL * 1000,
     };
+  }
+
+  private crossSiteFrontend(): boolean {
+    try {
+      return (
+        new URL(this.get('FRONTEND_URL')).origin !==
+        new URL(this.get('API_URL')).origin
+      );
+    } catch {
+      return true;
+    }
   }
 
   setCookie(res: Response, sessionId: string) {
