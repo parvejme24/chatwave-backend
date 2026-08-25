@@ -63,3 +63,7 @@ export function usernameFromEmail(email: string) {
 export function randomTone() {
   return TONES[randomInt(0, TONES.length)];
 }
+
+export function isManagedUserHidden(user: { status?: string | null; deletedAt?: Date | string | null }) {
+  return user.status === 'banned' || user.deletedAt != null;
+}

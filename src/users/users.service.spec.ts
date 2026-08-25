@@ -5,7 +5,7 @@ import { Test } from '@nestjs/testing';
 import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { RedisService } from '../common/redis/redis.service';
 import { User, UserDocument } from './user.schema';
-import { initialsFromName } from './users.constants';
+import { initialsFromName, isManagedUserHidden } from './users.constants';
 import { UsersService } from './users.service';
 
 function q<T>(value: T) {
@@ -60,6 +60,12 @@ describe('UsersService', () => {
   it('builds initials from one or two words', () => {
     expect(initialsFromName('Parvej')).toBe('PA');
     expect(initialsFromName('Md Parvej')).toBe('MP');
+  });
+
+  it('hides banned and deleted users', () => {
+    expect(isManagedUserHidden({ status: 'banned', deletedAt: null })).toBe(true);
+    expect(isManagedUserHidden({ status: 'active', deletedAt: new Date() })).toBe(true);
+    expect(isManagedUserHidden({ status: 'active', deletedAt: null })).toBe(false);
   });
 
   it('rejects a taken username', async () => {

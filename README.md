@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, and Calls (WebRTC signaling, not an SFU) are implemented; contacts come later.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), and Contacts are implemented.
 
 ## Setup
 
@@ -111,7 +111,7 @@ curl -s -b cookies.txt -X PATCH http://localhost:5000/api/users/me \
   -d '{"name":"Md Parvej","username":"parvej","role":"Full-stack developer","location":"Dhaka","tone":"a"}'
 ```
 
-Search people (Contacts + create-group picker):
+Search people (add-to-contacts / create-group picker — not the saved address book):
 
 ```bash
 curl -s -b cookies.txt 'http://localhost:5000/api/users/search?q=nadia&limit=20'
@@ -133,6 +133,40 @@ curl -s -b cookies.txt http://localhost:5000/api/users/by-username/nadia
 ```
 
 `GET /api/auth/me` and `PATCH /api/auth/profile` still work; they call the Users service.
+
+## Contacts examples
+
+Saved people (`owner` → `person` rows). `GET /api/users/search` still finds people to add; this list is only contacts you saved. Banned and deleted users are hidden. Sorted by name.
+
+List (optional `q` name/username, `presence=online|away|offline`). `total` / `onlineCount` are the unfiltered address book so the Online now subtitle can show “3 of 24”:
+
+```bash
+curl -s -b cookies.txt 'http://localhost:5000/api/contacts'
+curl -s -b cookies.txt 'http://localhost:5000/api/contacts?q=nadia'
+curl -s -b cookies.txt http://localhost:5000/api/contacts/online
+```
+
+Add by username (201 if new, 200 if already saved):
+
+```bash
+curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"nadia"}'
+```
+
+Patch note, open a direct chat, delete (idempotent), invite link:
+
+```bash
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/contacts/USER_ID \
+  -H 'Content-Type: application/json' \
+  -d '{"note":"Product designer, Dhaka"}'
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts/USER_ID/chat
+
+curl -s -b cookies.txt -X DELETE http://localhost:5000/api/contacts/USER_ID
+
+curl -s -b cookies.txt http://localhost:5000/api/contacts/invite-link
+```
 
 ## Conversations examples
 

@@ -21,6 +21,7 @@ import {
   PRESENCE_TTL,
   randomTone,
   usernameFromEmail,
+  isManagedUserHidden,
   type AuthViewer,
   type OwnerUser,
   type Presence,
@@ -127,7 +128,7 @@ export class UsersService {
     const rows = await this.users.find(filter).limit(take * 3).exec();
     const users: PublicUser[] = [];
     for (const row of rows) {
-      if (row.status !== 'active' || row.deletedAt) continue;
+      if (isManagedUserHidden(row)) continue;
       const item = await this.publicUser(viewer, row);
       if (presence && item.presence !== presence) continue;
       users.push(item);
@@ -169,9 +170,17 @@ export class UsersService {
     return this.users.find({ _id: { $in: ids } }).exec();
   }
 
+  findByUsername(username: string) {
+    return this.users.findOne({ username: username.replace(/^@/, '').toLowerCase().trim() }).exec();
+  }
+
+  async livePresence(userId: string): Promise<Presence> {
+    return (await this.redis.getLivePresence(userId)) ?? 'offline';
+  }
+
   async findActiveById(id: string) {
     const user = await this.users.findById(id).exec();
-    return !user || user.status === 'banned' || user.deletedAt ? null : user;
+    return !user || isManagedUserHidden(user) ? null : user;
   }
 
   findByEmail(email: string) {
@@ -290,7 +299,7 @@ export class UsersService {
 
   private async visiblePublic(viewer: AuthViewer, user: UserDocument | null) {
     if (!user) throw new NotFoundException({ error: 'User not found' });
-    if (viewer.id !== user.id && !viewer.isOwner && (user.status === 'banned' || user.deletedAt)) {
+    if (viewer.id !== user.id && !viewer.isOwner && isManagedUserHidden(user)) {
       throw new NotFoundException({ error: 'User not found' });
     }
     return this.publicUser(viewer, user);

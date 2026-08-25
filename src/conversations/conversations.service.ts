@@ -60,6 +60,36 @@ export class ConversationsService {
     return { conversation: await this.toDetail(viewer, await this.requireMember(viewer.id, id)) };
   }
 
+  async getOrCreateDirect(viewer: AuthViewer, otherId: string) {
+    return this.createDirect(viewer, otherId);
+  }
+
+  async directIdsFor(ownerId: string, peerIds: string[]) {
+    const map = new Map<string, string>();
+    const keys = [...new Set(peerIds)].filter((id) => id !== ownerId && isMongoId(id)).map((id) => pairKey(ownerId, id));
+    if (keys.length === 0) return map;
+    const rows = await this.conversations.find({ type: 'direct', pairKey: { $in: keys } }).exec();
+    for (const row of rows) {
+      const other = row.members.find((member) => String(member.user) !== ownerId);
+      if (other) map.set(String(other.user), row.id);
+    }
+    return map;
+  }
+
+  async listDirectPeerIds(userId: string) {
+    const rows = await this.conversations
+      .find({ type: 'direct', 'members.user': new Types.ObjectId(userId) })
+      .exec();
+    const ids: string[] = [];
+    for (const row of rows) {
+      if (!activeMember(row, userId)) continue;
+      for (const member of row.members) {
+        if (!member.leftAt && String(member.user) !== userId) ids.push(String(member.user));
+      }
+    }
+    return [...new Set(ids)];
+  }
+
   async createDirect(viewer: AuthViewer, otherId: string) {
     if (otherId === viewer.id) throw new BadRequestException({ error: 'You cannot start a chat with yourself' });
     if (!isMongoId(otherId) || !(await this.users.findActiveById(otherId))) {
