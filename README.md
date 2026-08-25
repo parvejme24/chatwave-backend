@@ -1,6 +1,6 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), and Contacts are implemented.
+NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, and session list/revoke are implemented.
 
 ## Setup
 
@@ -95,6 +95,13 @@ Logout:
 curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:5000/api/auth/logout
 ```
 
+List devices and sign out one session (`DELETE` on the current id is the same as logout):
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/auth/sessions
+curl -s -b cookies.txt -c cookies.txt -X DELETE http://localhost:5000/api/auth/sessions/SESSION_ID
+```
+
 ## Users examples
 
 Current profile (settings screen):
@@ -166,6 +173,20 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts/USER_ID/chat
 curl -s -b cookies.txt -X DELETE http://localhost:5000/api/contacts/USER_ID
 
 curl -s -b cookies.txt http://localhost:5000/api/contacts/invite-link
+```
+
+## Blocks examples
+
+Blocked people cannot message or call you (1:1). They are hidden from Contacts, user search, and conversation search. The conversation row stays; sending and calling return 403 `You cannot message this person`. Adding a contact that is blocked is 403 `You cannot add this person`. Group add skips blocked people instead of failing the whole request.
+
+```bash
+curl -s -b cookies.txt http://localhost:5000/api/blocks
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/blocks \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"nadia"}'
+
+curl -s -b cookies.txt -X DELETE http://localhost:5000/api/blocks/USER_ID
 ```
 
 ## Conversations examples
@@ -347,6 +368,7 @@ socket.on("message:new", handler)
 | | | `group:updated` | `{ conversationId, members, status, sub }` to the thread and each member’s `user:{id}` |
 | | | `group:member-left` | `{ conversationId, userId, reason: "left" \| "removed" }` |
 | | | `conversation:removed` | `{ conversationId }` to the leaver / kicked user’s `user:{id}` (drop from the sidebar) |
+| | | `user:blocked` | `{ userId }` to both `user:{id}` rooms after a block |
 | `call:join` | `{ callId }` | `call:incoming` | `{ call }` CallDto to each callee’s `user:{id}` |
 | `call:leave` | `{ callId }` | `call:accepted` | `{ callId, userId }` |
 | `webrtc:offer` | `{ callId, toUserId, sdp }` | `webrtc:offer` | forwarded to `user:{toUserId}` (SDP not stored) |

@@ -2,15 +2,19 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
+import { BlocksService } from '../blocks/blocks.service';
 import { RedisService } from '../common/redis/redis.service';
 import { AppEnv } from '../config/env.validation';
 import { ConversationDocument } from '../conversations/conversation.schema';
@@ -51,6 +55,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     private readonly redis: RedisService,
     private readonly config: ConfigService<AppEnv, true>,
     private readonly realtime: CallsRealtime,
+    @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
   onModuleInit() {
@@ -75,6 +80,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     const memberIds = this.conversations.activeMemberIds(conversation);
     const callees = memberIds.filter((id) => id !== viewer.id);
     if (!callees.length) throw new BadRequestException({ error: 'No one to call' });
+    if (conversation.type === 'direct' && callees[0]) await this.blocks?.assertNotBlocked(viewer.id, callees[0]);
     const people = await this.users.findByIds(callees);
     if (people.length !== callees.length || people.some((u) => u.status !== 'active' || u.deletedAt)) {
       throw new BadRequestException({ error: 'Someone in this chat is not available' });

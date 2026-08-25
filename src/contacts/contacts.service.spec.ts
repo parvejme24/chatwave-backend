@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 
+import { BlocksService } from '../blocks/blocks.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { UsersService } from '../users/users.service';
 import { CANNOT_ADD_SELF } from './contacts.constants';
@@ -115,6 +116,7 @@ describe('ContactsService', () => {
         { provide: UsersService, useValue: users },
         { provide: ConversationsService, useValue: conversations },
         { provide: ConfigService, useValue: config },
+        { provide: BlocksService, useValue: { assertNotBlocked: jest.fn(), restrictedIds: jest.fn() } },
       ],
     }).compile();
     service = module.get(ContactsService);

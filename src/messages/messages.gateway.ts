@@ -115,6 +115,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, Re
     this.server.to(room('user', userId)).emit('conversation:preview', preview);
   }
 
+  emitBlocked(blockerId: string, blockedId: string) {
+    this.server.to(room('user', blockerId)).emit('user:blocked', { userId: blockedId });
+    this.server.to(room('user', blockedId)).emit('user:blocked', { userId: blockerId });
+  }
+
   @SubscribeMessage('conversation:join')
   async join(@ConnectedSocket() socket: ChatSocket, @MessageBody() body: unknown) {
     const conversationId = chatId(body);

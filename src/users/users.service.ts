@@ -1,14 +1,17 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
 import { randomBytes } from 'crypto';
 
+import { BLOCKS_CHECK } from '../blocks/blocks.constants';
 import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { RedisService } from '../common/redis/redis.service';
 import { UpdateProfileDto } from './users.dto';
@@ -35,6 +38,7 @@ export class UsersService {
     @InjectModel(User.name) private readonly users: Model<UserDocument>,
     private readonly redis: RedisService,
     private readonly cloudinary: CloudinaryService,
+    @Optional() @Inject(BLOCKS_CHECK) private readonly blocks?: { restrictedIds(userId: string): Promise<Set<string>> },
   ) {}
 
   async getMe(userId: string) {
@@ -126,9 +130,10 @@ export class UsersService {
         : [{ name: rx }, { username: rx }];
     }
     const rows = await this.users.find(filter).limit(take * 3).exec();
+    const skip = await this.blocks?.restrictedIds(viewer.id);
     const users: PublicUser[] = [];
     for (const row of rows) {
-      if (isManagedUserHidden(row)) continue;
+      if (isManagedUserHidden(row) || skip?.has(row.id)) continue;
       const item = await this.publicUser(viewer, row);
       if (presence && item.presence !== presence) continue;
       users.push(item);
@@ -146,7 +151,12 @@ export class UsersService {
       .find({ _id: { $in: ids }, status: 'active', deletedAt: null })
       .exec();
     const users = await Promise.all(rows.map((row) => this.publicUser(viewer, row)));
-    return { users: users.filter((u) => u.presence === 'online' || u.presence === 'away') };
+    const skip = await this.blocks?.restrictedIds(viewer.id);
+    return {
+      users: users.filter(
+        (u) => (u.presence === 'online' || u.presence === 'away') && !skip?.has(u.id),
+      ),
+    };
   }
 
   async getPublicById(viewer: AuthViewer, id: string) {

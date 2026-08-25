@@ -14,7 +14,9 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { GroupsModule } from './groups/groups.module';
 import { MessagesModule } from './messages/messages.module';
 import { CallsModule } from './calls/calls.module';
+import { BlocksModule } from './blocks/blocks.module';
 import { ContactsModule } from './contacts/contacts.module';
+import { SessionsModule } from './sessions/sessions.module';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { ContactsModule } from './contacts/contacts.module';
     GroupsModule,
     CallsModule,
     ContactsModule,
+    BlocksModule,
+    SessionsModule,
     AuthModule,
   ],
   controllers: [AppController],

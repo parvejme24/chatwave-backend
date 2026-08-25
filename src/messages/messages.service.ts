@@ -1,12 +1,16 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
+import { BlocksService } from '../blocks/blocks.service';
 import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { RedisService } from '../common/redis/redis.service';
 import { viewerPreview, type PreviewIcon } from '../conversations/conversations.constants';
@@ -42,6 +46,7 @@ export class MessagesService {
     private readonly users: UsersService,
     private readonly cloudinary: CloudinaryService,
     private readonly redis: RedisService,
+    @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
   bindPublisher(publisher: RealtimePublisher) {
@@ -269,6 +274,10 @@ export class MessagesService {
     const user = await this.users.findActiveById(viewer.id);
     if (!user) throw new ForbiddenException({ error: 'Your account cannot send messages' });
     const conversation = await this.conversations.assertMember(viewer.id, conversationId);
+    if (conversation.type === 'direct') {
+      const other = this.conversations.activeMemberIds(conversation).find((id) => id !== viewer.id);
+      if (other) await this.blocks?.assertNotBlocked(viewer.id, other);
+    }
     try {
       if (await this.redis.tooMany(`rl:msg:${viewer.id}:${conversationId}`, 30, 10)) {
         throw new BadRequestException({ error: 'You are sending messages too quickly' });

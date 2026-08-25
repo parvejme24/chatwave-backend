@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional, forwardRef } from '@nestjs/common';
 
+import { BlocksService } from '../blocks/blocks.service';
 import { ConversationDocument } from '../conversations/conversation.schema';
 import { ConversationsService } from '../conversations/conversations.service';
 import { ChatGateway } from '../messages/messages.gateway';
@@ -15,6 +16,7 @@ export class GroupsService {
     private readonly users: UsersService,
     private readonly messages: MessagesService,
     private readonly realtime: ChatGateway,
+    @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
   async listMembers(viewer: AuthViewer, id: string) {
@@ -25,7 +27,11 @@ export class GroupsService {
   async addMembers(viewer: AuthViewer, id: string, userIds: string[]) {
     const row = await this.conversations.assertGroupAdmin(id, viewer.id, ADMIN_ACTION_ERROR);
     const taken = new Set(this.conversations.activeMemberIds(row));
-    const candidates = [...new Set(userIds)].filter((uid) => uid !== viewer.id && !taken.has(uid));
+    let candidates = [...new Set(userIds)].filter((uid) => uid !== viewer.id && !taken.has(uid));
+    if (this.blocks) {
+      const skip = await this.blocks.restrictedIds(viewer.id);
+      candidates = candidates.filter((uid) => !skip.has(uid));
+    }
     if (!candidates.length) return { created: false, conversation: await this.conversations.toDetail(viewer, row) };
     const people = await this.users.findByIds(candidates);
     if (people.length !== candidates.length || people.some((u) => u.status !== 'active' || u.deletedAt)) {

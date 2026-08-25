@@ -1,12 +1,16 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
 
+import { BlocksService } from '../blocks/blocks.service';
 import { initialsFromName, type AuthViewer, type PublicUser } from '../users/users.constants';
 import { UserDocument } from '../users/user.schema';
 import { UsersService } from '../users/users.service';
@@ -29,6 +33,7 @@ export class ConversationsService {
   constructor(
     @InjectModel(Conversation.name) private readonly conversations: Model<ConversationDocument>,
     private readonly users: UsersService,
+    @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
   async list(viewer: AuthViewer, filter: ListFilter = 'all', q?: string, limit = 50) {
@@ -39,6 +44,7 @@ export class ConversationsService {
       .sort({ lastMessageAt: -1 })
       .limit(200)
       .exec();
+    const skip = await this.blocks?.restrictedIds(viewer.id);
     const people = await this.peopleMap(rows, viewer);
     const query = q?.trim().toLowerCase();
     const items: ConversationListItem[] = [];
@@ -48,6 +54,10 @@ export class ConversationsService {
       if (filter === 'archived' ? !mine.archived : mine.archived) continue;
       if (filter === 'unread' && mine.unreadCount <= 0) continue;
       if (filter === 'groups' && row.type !== 'group') continue;
+      if (row.type === 'direct' && skip) {
+        const other = row.members.find((m) => !m.leftAt && String(m.user) !== viewer.id);
+        if (other && skip.has(String(other.user))) continue;
+      }
       const item = await this.toListItem(viewer, row, mine, people);
       if (query && !`${item.name} ${item.preview}`.toLowerCase().includes(query)) continue;
       items.push(item);
@@ -92,6 +102,7 @@ export class ConversationsService {
 
   async createDirect(viewer: AuthViewer, otherId: string) {
     if (otherId === viewer.id) throw new BadRequestException({ error: 'You cannot start a chat with yourself' });
+    await this.blocks?.assertNotBlocked(viewer.id, otherId);
     if (!isMongoId(otherId) || !(await this.users.findActiveById(otherId))) {
       throw new BadRequestException({ error: 'That person is not available' });
     }

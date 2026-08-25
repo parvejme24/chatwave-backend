@@ -79,6 +79,7 @@ describe('AuthService', () => {
   const redis = {
     createSession: jest.fn().mockResolvedValue('session-1'),
     deleteAllSessions: jest.fn().mockResolvedValue(undefined),
+    deleteSession: jest.fn().mockResolvedValue(undefined),
     deleteOtp: jest.fn().mockResolvedValue(undefined),
     getOtpHash: jest.fn(),
     setOtpHash: jest.fn().mockResolvedValue(undefined),
@@ -246,6 +247,16 @@ describe('AuthService', () => {
           password: 'newpass12',
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('logout', () => {
+    const res = { clearCookie: jest.fn() } as unknown as Response;
+
+    it('logout-all empties the session set and clears the cookie', async () => {
+      await expect(service.logoutAll('user-1', res)).resolves.toEqual({ ok: true });
+      expect(redis.deleteAllSessions).toHaveBeenCalledWith('user-1');
+      expect(res.clearCookie).toHaveBeenCalled();
     });
   });
 });

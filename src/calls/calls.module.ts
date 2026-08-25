@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { AuthModule } from '../auth/auth.module';
+import { BlocksModule } from '../blocks/blocks.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { MessagesModule } from '../messages/messages.module';
 import { UsersModule } from '../users/users.module';
@@ -17,6 +18,7 @@ import { CallsService } from './calls.service';
     UsersModule,
     ConversationsModule,
     MessagesModule,
+    forwardRef(() => BlocksModule),
     forwardRef(() => AuthModule),
   ],
   controllers: [CallsController],

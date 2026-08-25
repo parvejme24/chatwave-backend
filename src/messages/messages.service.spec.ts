@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 
 import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { RedisService } from '../common/redis/redis.service';
+import { BlocksService } from '../blocks/blocks.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { UsersService } from '../users/users.service';
 import { Message } from './message.schema';
@@ -75,12 +76,15 @@ describe('MessagesService', () => {
     isGroupAdmin: jest.fn().mockReturnValue(false),
   };
   const users = { findActiveById: jest.fn(), findByIds: jest.fn(), findById: jest.fn() };
+  const blocks = { assertNotBlocked: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     conversations.assertMember.mockResolvedValue(convo());
     conversations.getById.mockResolvedValue(convo());
     users.findByIds.mockResolvedValue([{ id: A, name: 'Rakib Islam', username: 'rakib', initials: 'RI', tone: 'c', photoUrl: null }]);
+    users.findActiveById.mockResolvedValue({ id: A, status: 'active' });
+    blocks.assertNotBlocked.mockResolvedValue(undefined);
     const module = await Test.createTestingModule({
       providers: [
         MessagesService,
@@ -89,6 +93,7 @@ describe('MessagesService', () => {
         { provide: UsersService, useValue: users },
         { provide: CloudinaryService, useValue: { uploadFile: jest.fn(), deleteAsset: jest.fn() } },
         { provide: RedisService, useValue: { tooMany: jest.fn().mockResolvedValue(false) } },
+        { provide: BlocksService, useValue: blocks },
       ],
     }).compile();
     service = module.get(MessagesService);
@@ -149,5 +154,11 @@ describe('MessagesService', () => {
     conversations.assertMember.mockRejectedValue(new ForbiddenException({ error: 'You cannot access this chat' }));
     await expect(service.list(viewer, CONV, {})).rejects.toBeInstanceOf(ForbiddenException);
     expect(model.find).not.toHaveBeenCalled();
+  });
+
+  it('forbids sending in a direct chat when blocked', async () => {
+    blocks.assertNotBlocked.mockRejectedValue(new ForbiddenException({ error: 'You cannot message this person' }));
+    await expect(service.send(viewer, CONV, { type: 'text', text: 'hi' })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(model.create).not.toHaveBeenCalled();
   });
 });

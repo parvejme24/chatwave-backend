@@ -12,7 +12,10 @@ import {
   OTP_WINDOW,
   redisKey,
   SESSION_TTL,
+  browserName,
+  deviceLabel,
   type OAuthProvider,
+  type SessionMeta,
   type SessionRecord,
 } from '../../auth/auth.constants';
 import { AppEnv } from '../../config/env.validation';
@@ -48,17 +51,20 @@ export class RedisService implements OnModuleDestroy {
     await this.client.quit();
   }
 
-  async createSession(
-    userId: string,
-    meta: Omit<SessionRecord, 'userId' | 'createdAt'>,
-  ): Promise<string> {
+  async createSession(userId: string, meta: SessionMeta): Promise<string> {
     const sessionId = randomUUID();
+    const now = new Date().toISOString();
     const payload: SessionRecord = {
       userId,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      lastActiveAt: now,
       userAgent: meta.userAgent,
       ip: meta.ip,
       platform: meta.platform,
+      device: deviceLabel(meta.userAgent, meta.platform),
+      browser: browserName(meta.userAgent),
+      city: '',
+      country: '',
     };
 
     const sessionKey = redisKey.session(sessionId);
@@ -88,11 +94,39 @@ export class RedisService implements OnModuleDestroy {
   async refreshSession(sessionId: string, userId: string): Promise<void> {
     const sessionKey = redisKey.session(sessionId);
     const userKey = redisKey.userSessions(userId);
+    const raw = await this.client.get(sessionKey);
+    if (!raw) return;
+    let payload: SessionRecord;
+    try {
+      payload = JSON.parse(raw) as SessionRecord;
+    } catch {
+      return;
+    }
+    payload.lastActiveAt = new Date().toISOString();
     await this.client
       .multi()
-      .expire(sessionKey, SESSION_TTL)
+      .set(sessionKey, JSON.stringify(payload), 'EX', SESSION_TTL)
       .expire(userKey, SESSION_TTL)
       .exec();
+  }
+
+  async listUserSessions(userId: string): Promise<Array<SessionRecord & { id: string }>> {
+    const ids = await this.client.smembers(redisKey.userSessions(userId));
+    if (ids.length === 0) return [];
+    const pipeline = this.client.pipeline();
+    for (const id of ids) pipeline.get(redisKey.session(id));
+    const results = await pipeline.exec();
+    const rows: Array<SessionRecord & { id: string }> = [];
+    ids.forEach((id, index) => {
+      const raw = results?.[index]?.[1];
+      if (typeof raw !== 'string') return;
+      try {
+        rows.push({ id, ...(JSON.parse(raw) as SessionRecord) });
+      } catch {
+        /* skip corrupt rows */
+      }
+    });
+    return rows;
   }
 
   async deleteSession(sessionId: string, userId: string): Promise<void> {

@@ -21,12 +21,20 @@ export const redisKey = {
 export type OAuthProvider = 'google' | 'github';
 export type SessionPlatform = 'web' | 'android' | 'ios';
 
-export type SessionRecord = {
-  userId: string;
-  createdAt: string;
+export type SessionMeta = {
   userAgent: string;
   ip: string;
   platform: SessionPlatform;
+};
+
+export type SessionRecord = SessionMeta & {
+  userId: string;
+  createdAt: string;
+  lastActiveAt: string;
+  device: string;
+  browser: string;
+  city: string;
+  country: string;
 };
 
 export type OAuthProfile = {
@@ -48,6 +56,37 @@ export function detectPlatform(ua: string): SessionPlatform {
     return 'ios';
   }
   return 'web';
+}
+
+export function browserName(ua: string) {
+  const value = ua.toLowerCase();
+  if (value.includes('edg/')) return 'Edge';
+  if (value.includes('chrome/') || value.includes('crios/')) return 'Chrome';
+  if (value.includes('firefox/') || value.includes('fxios/')) return 'Firefox';
+  if (value.includes('safari/') && !value.includes('chrome')) return 'Safari';
+  return 'ChatWave';
+}
+
+export function osName(ua: string) {
+  const value = ua.toLowerCase();
+  if (value.includes('android')) return 'Android';
+  if (value.includes('iphone') || value.includes('ipad') || value.includes('ios')) return 'iOS';
+  if (value.includes('mac os')) return 'macOS';
+  if (value.includes('windows')) return 'Windows';
+  if (value.includes('linux')) return 'Linux';
+  return 'Web';
+}
+
+export function deviceLabel(ua: string, platform: SessionPlatform) {
+  if (platform === 'android') return 'ChatWave on Android';
+  if (platform === 'ios') return 'ChatWave on iOS';
+  return `${browserName(ua)} on ${osName(ua)}`;
+}
+
+export function maskIp(ip: string) {
+  if (!ip) return '';
+  if (ip.includes(':')) return ip.replace(/[0-9a-f]+$/i, 'x');
+  return ip.replace(/\.\d+$/, '.x');
 }
 
 export function clientIp(ip?: string, forwarded?: unknown) {

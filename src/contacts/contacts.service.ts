@@ -1,13 +1,18 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
 
+import { BlocksService } from '../blocks/blocks.service';
+import { CONTACT_BLOCKED } from '../blocks/blocks.constants';
 import { AppEnv } from '../config/env.validation';
 import { ConversationsService } from '../conversations/conversations.service';
 import { isManagedUserHidden, type AuthViewer, type Presence } from '../users/users.constants';
@@ -33,6 +38,7 @@ export class ContactsService {
     private readonly users: UsersService,
     private readonly conversations: ConversationsService,
     private readonly config: ConfigService<AppEnv, true>,
+    @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
   async list(viewer: AuthViewer, q?: string, presence?: Presence) {
@@ -59,6 +65,7 @@ export class ContactsService {
     if (!person) throw new NotFoundException({ error: USER_NOT_FOUND });
     if (person.id === viewer.id) throw new BadRequestException({ error: CANNOT_ADD_SELF });
     if (isManagedUserHidden(person)) throw new ForbiddenException({ error: ACCOUNT_UNAVAILABLE });
+    await this.blocks?.assertNotBlocked(viewer.id, person.id, CONTACT_BLOCKED);
     const existing = await this.contacts.findOne(pair(viewer.id, person.id)).exec();
     if (existing) return { created: false, contact: await this.toDto(viewer, person, existing.note) };
     try {
@@ -108,7 +115,10 @@ export class ContactsService {
       .exec();
     const have = new Set(saved.map((row) => String(row.person)));
     const missing = peerIds.filter((id) => id !== viewer.id && !have.has(id)).slice(0, 10);
-    const people = (await this.users.findByIds(missing)).filter((p) => p.id !== viewer.id && !isManagedUserHidden(p));
+    const skip = await this.blocks?.restrictedIds(viewer.id);
+    const people = (await this.users.findByIds(missing)).filter(
+      (p) => p.id !== viewer.id && !isManagedUserHidden(p) && !skip?.has(p.id),
+    );
     const contacts = await Promise.all(people.map((person) => this.toDto(viewer, person, '')));
     contacts.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     return { contacts };
@@ -118,9 +128,10 @@ export class ContactsService {
     const rows = await this.contacts.find({ owner: new Types.ObjectId(viewer.id) }).exec();
     const people = await this.users.findByIds(rows.map((row) => String(row.person)));
     const byId = new Map(people.map((person) => [person.id, person]));
+    const skip = await this.blocks?.restrictedIds(viewer.id);
     const visible = rows.flatMap((row) => {
       const person = byId.get(String(row.person));
-      if (!person || person.id === viewer.id || isManagedUserHidden(person)) return [];
+      if (!person || person.id === viewer.id || isManagedUserHidden(person) || skip?.has(person.id)) return [];
       return [{ person, note: row.note }];
     });
     const directs = await this.conversations.directIdsFor(

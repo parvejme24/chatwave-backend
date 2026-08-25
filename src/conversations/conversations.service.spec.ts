@@ -1,7 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 
+import { BlocksService } from '../blocks/blocks.service';
 import { UsersService } from '../users/users.service';
 import { Conversation } from './conversation.schema';
 import { ConversationsService } from './conversations.service';
@@ -52,6 +53,7 @@ describe('ConversationsService', () => {
   let service: ConversationsService;
   const model = { find: jest.fn(), findOne: jest.fn(), findById: jest.fn(), create: jest.fn() };
   const users = { findActiveById: jest.fn(), findByIds: jest.fn(), publicUser: jest.fn() };
+  const blocks = { assertNotBlocked: jest.fn(), restrictedIds: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -69,11 +71,14 @@ describe('ConversationsService', () => {
       presence: 'online',
       sub: 'Designer · Dhaka',
     }));
+    blocks.assertNotBlocked.mockResolvedValue(undefined);
+    blocks.restrictedIds.mockResolvedValue(new Set());
     const module = await Test.createTestingModule({
       providers: [
         ConversationsService,
         { provide: getModelToken(Conversation.name), useValue: model },
         { provide: UsersService, useValue: users },
+        { provide: BlocksService, useValue: blocks },
       ],
     }).compile();
     service = module.get(ConversationsService);
@@ -90,6 +95,12 @@ describe('ConversationsService', () => {
     const result = await service.createDirect(viewer, B);
     expect(result.created).toBe(false);
     expect(result.conversation.id).toBe(existing.id);
+    expect(model.create).not.toHaveBeenCalled();
+  });
+
+  it('forbids creating a direct chat when blocked', async () => {
+    blocks.assertNotBlocked.mockRejectedValue(new ForbiddenException({ error: 'You cannot message this person' }));
+    await expect(service.createDirect(viewer, B)).rejects.toBeInstanceOf(ForbiddenException);
     expect(model.create).not.toHaveBeenCalled();
   });
 
