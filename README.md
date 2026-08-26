@@ -1,19 +1,152 @@
 # ChatWave API
 
-NestJS API for ChatWave. The Next.js app at `http://localhost:3000` talks to this server at `http://localhost:5000` (or `PORT`). Auth, Users, Conversations, Messages, Groups, Calls (WebRTC signaling, not an SFU), Contacts, Blocks, session list/revoke, Settings, Admin (owner tools), and Notifications are implemented.
+**Real-time messaging backend for a WhatsApp-style chat product.**
 
-## Setup
+[![NestJS](https://img.shields.io/badge/NestJS-11-E0234E?logo=nestjs&logoColor=white)](https://nestjs.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com)
+[![Redis](https://img.shields.io/badge/Redis-sessions%20%2B%20presence-DC382D?logo=redis&logoColor=white)](https://redis.io)
+[![Socket.IO](https://img.shields.io/badge/Socket.IO-realtime-010101?logo=socketdotio&logoColor=white)](https://socket.io)
+[![Node](https://img.shields.io/badge/Node-22-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+
+Live API: [chatwave-backend-z7n1.onrender.com](https://chatwave-backend-z7n1.onrender.com)  
+Health: `GET /` → `{ "message": "Welcome to Chatwave API", "status": "running" }`  
+Frontend talks to this service over REST (`/api`) and Socket.IO (`/socket.io`).
+
+---
+
+## What is ChatWave?
+
+ChatWave is a **full-stack chat application**. This repository is the **backend**: a NestJS API that stores users and conversations, authenticates sessions, and pushes live events (messages, typing, calls, presence).
+
+People use it the way they use WhatsApp or Telegram:
+
+- Find someone, follow them, and start a 1:1 chat
+- Talk in groups with admins and membership
+- Send text, photos, PDFs, docs, and video from their device
+- See when a message was delivered or read
+- Place audio/video calls over WebRTC
+- Mute, block, pin, and manage devices
+
+**Why this backend exists:** a chat UI is only as good as the server. ChatWave’s API is built so a Next.js client can stay thin: the server owns auth, privacy, receipts, media, and realtime fan-out.
+
+---
+
+## Why recruiters / users care
+
+| Need | What ChatWave does |
+| --- | --- |
+| Talk instantly | Socket.IO rooms for threads, users, and calls — not polling |
+| Stay signed in safely | HttpOnly session cookie + short-lived JWT, Redis-backed devices, logout-all |
+| Discover people | Directory of every registered user with Follow / Unfollow; follow opens a DM |
+| Share work, not only chat | Multi-file uploads (PDF, Office, images, video) and https document links |
+| Privacy | Blocks, read-receipts toggle, delete-for-me vs delete-for-everyone, last-seen settings |
+| Calls without a media server | Nest is **signaling only**; media is peer-to-peer WebRTC (STUN, optional TURN) |
+| Operate it | Owner admin (ban / unban / delete), notifications, hourly email digest, Render-ready |
+
+Skills this project demonstrates: **REST + WebSockets**, **OAuth 2.0**, **JWT + cookie sessions**, **MongoDB modeling**, **Redis**, **file pipelines**, **WebRTC signaling**, **RBAC**, **production deploy**.
+
+---
+
+## Key features
+
+### Accounts
+- Email + password register / login
+- Google and GitHub OAuth
+- Forgot-password OTP in Redis, reset over SMTP
+- Profile, username, photo (Cloudinary), presence (`online` / `away` / `offline`)
+- Multi-device session list and revoke
+
+### People
+- `GET /api/users` and `GET /api/contacts` — all discoverable users (not you, not blocked)
+- Each row has `following` so the UI can show **Follow** or **Unfollow**
+- Follow = save contact + open a direct conversation (shows in the chat list)
+- Unfollow hides an empty DM; a thread with messages stays until you delete the chat
+- Blocks hide people from search, contacts, and 1:1 messaging
+
+### Conversations & groups
+- Direct chats and groups (create with at least 3 other members)
+- Pin, mute, archive, unread counts, mark read
+- Group admins: add / remove members, promote, leave (last admin is auto-promoted)
+
+### Messages
+- Text, images, generic files, voice, video (including files from the user’s machine), video notes
+- Up to **10 attachments** per send; **50 MB** per file (images **10 MB**)
+- Google Docs / Sheets (or any `https`) links as attachments
+- Reply, emoji reactions, pin, search, delivered / seen
+- `seenBy` list on each message (respects `readReceipts`)
+- Delete `scope=me` (any member, hide for yourself) or `scope=everyone` (sender only)
+
+### Calls
+- Audio / video 1:1 and group mesh in the call room
+- Incoming ring, accept / decline / miss timeout, ICE quality hints
+- SDP and ICE candidates are **not stored** — forwarded over the socket
+
+### Product extras
+- In-app notifications + unread badge
+- Settings: theme, sounds, privacy, delete-account flow
+- Owner admin for other accounts (cannot moderate the owner)
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+| --- | --- |
+| Runtime | Node.js 22 |
+| Framework | NestJS 11 (modules, guards, pipes, WebSockets) |
+| Language | TypeScript |
+| HTTP | Express, Helmet, CORS + credentials, cookie-parser |
+| Database | MongoDB (Mongoose) — users, chats, messages, calls |
+| Cache / sessions | Redis (ioredis) — sessions, OTPs, live presence, rate limits |
+| Realtime | Socket.IO |
+| Auth | Passport (local, Google, GitHub), JWT, bcrypt |
+| Media | Cloudinary (avatars + chat files) |
+| Mail | Nodemailer (reset + digest) |
+| Validation | class-validator / class-transformer, env via Joi |
+| Tests | Jest |
+| Deploy | Render (`node dist/main`), MongoDB Atlas, Redis Cloud |
+
+```mermaid
+flowchart LR
+  Next["Next.js client"] -->|REST /api + cookie or Bearer| Nest["NestJS API"]
+  Next <-->|Socket.IO| Nest
+  Nest --> Mongo[(MongoDB)]
+  Nest --> Redis[(Redis)]
+  Nest --> Cloudinary[Cloudinary]
+  Nest --> SMTP[SMTP]
+  Nest -.->|WebRTC signaling only| Peers["Browser peers"]
+```
+
+---
+
+## Architecture
+
+Flat Nest modules (no extra `dto/` / `schemas/` folders):
+
+`Auth` · `Users` · `Conversations` · `Messages` · `Groups` · `Calls` · `Contacts` · `Blocks` · `Sessions` · `Settings` · `Admin` · `Notifications`
+
+Cross-cutting: `RedisModule`, `MailModule`, `CloudinaryModule`, global `ValidationPipe`, `{ "error": "human message" }` filter.
+
+| Concern | Where it lives |
+| --- | --- |
+| Passwords, sessions, OTPs, presence | Redis |
+| Users, DMs, groups, messages, calls | MongoDB |
+| Uploads | Cloudinary (`raw` / `image` / `video`) |
+| Errors | `{ "error": "…" }` — no stack traces to the client |
+
+---
+
+## Quick start
 
 ```bash
 pnpm install
 cp .env.example .env
 ```
 
-Fill in `.env`. MongoDB and Redis are required. SMTP, Cloudinary, Google, and GitHub can stay empty while you build locally.
+MongoDB and Redis are required. SMTP, Cloudinary, Google, and GitHub can stay empty while you develop.
 
-### MongoDB
-
-Use MongoDB Atlas (`MONGODB_URI`) or run locally:
+**MongoDB** (Atlas `MONGODB_URI`, or local):
 
 ```bash
 docker run -d --name chatwave-mongo -p 27017:27017 mongo:7
@@ -24,9 +157,7 @@ MONGODB_URI=mongodb://127.0.0.1:27017
 DB_NAME=chatwave-db
 ```
 
-### Redis
-
-Sessions, password-reset OTPs, and live presence live in Redis, not MongoDB.
+**Redis:**
 
 ```bash
 docker run -d --name chatwave-redis -p 6379:6379 redis:7
@@ -36,345 +167,61 @@ docker run -d --name chatwave-redis -p 6379:6379 redis:7
 REDIS_URL=redis://127.0.0.1:6379
 ```
 
-For Redis Cloud / TLS, set `REDIS_TLS=true`.
-
-### Run
+TLS Redis: `REDIS_TLS=true`.
 
 ```bash
 pnpm start:dev
 ```
 
-The API prints `Server is running at http://localhost:5000`.
+Server: `http://0.0.0.0:$PORT` (`.env.example` uses `5000`). Prefix `/api` except `GET /`.
 
-### Render
-
-Do **not** use `nest start` as the start command. It recompiles TypeScript and OOMs on a small instance.
-
-```
-Build command:  pnpm install --frozen-lockfile --prod=false && pnpm run build
-Start command:  pnpm start
-Health check:   /
-Node:           22
+```bash
+pnpm test
 ```
 
-`pnpm start` is `node dist/main`. Local work stays `pnpm start:dev`. Render injects `PORT` — do not set it.
+---
 
-Environment (Dashboard → Environment):
+## API map
 
-| Variable | Notes |
+Auth is the `cw_session` cookie **or** `Authorization: Bearer <accessToken>`.
+
+| Area | Examples |
 | --- | --- |
-| `NODE_ENV` | `production` |
-| `FRONTEND_URL` | Exact frontend origin, no trailing slash (`https://your-app.vercel.app`) |
-| `API_URL` | This service’s public URL (`https://your-api.onrender.com`) |
-| `MONGODB_URI` | Atlas connection string |
-| `REDIS_URL` | `rediss://…` for Redis Cloud / Render Redis |
-| `REDIS_TLS` | `true` if the URL is not already `rediss://` |
-| `JWT_SECRET` | ≥ 16 characters |
-| `SESSION_SECRET` | ≥ 16 characters |
+| Auth | `POST /api/auth/register` · `login` · `logout` · `forgot-password` · OAuth `/google` `/github` |
+| Users | `GET /api/users` (directory + `following`) · `GET/PATCH /api/users/me` · `GET /api/users/search` |
+| Contacts | `GET /api/contacts` · `GET /api/contacts/following` · `POST /api/contacts/:id/follow` · `DELETE /api/contacts/:id` |
+| Chats | `GET /api/conversations` · `POST /api/conversations/direct` · `POST /api/conversations/groups` |
+| Groups | `POST/DELETE /api/conversations/:id/members` · `POST .../leave` |
+| Messages | `GET/POST .../messages` · `POST .../seen` · `DELETE /api/messages/:id?scope=me\|everyone` |
+| Calls | `POST /api/calls` · `accept` · `decline` · `end` |
+| Blocks / settings / admin / notifications | `/api/blocks` · `/api/settings` · `/api/admin/users` · `/api/notifications` |
 
-Atlas → Network Access: allow `0.0.0.0/0` (or Render outbound IPs). Nest does not bind a port until Mongo connects.
-
-Google callback: `{API_URL}/api/auth/google/callback`  
-GitHub callback: `{API_URL}/api/auth/github/callback`
-
-If the frontend is on another host (for example Vercel), session cookies use `SameSite=None; Secure`. Connect the GitHub repo in Render if logs say it does not have access.
-
-## Auth examples
-
-Register (does not sign you in):
+### Auth
 
 ```bash
 curl -s -X POST http://localhost:5000/api/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"name":"Ayesha Rahman","email":"ayesha@example.com","password":"password1"}'
-```
 
-Login (sets `cw_session` cookie and returns `accessToken`):
-
-```bash
 curl -s -c cookies.txt -X POST http://localhost:5000/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"ayesha@example.com","password":"password1"}'
-```
 
-Current user:
-
-```bash
 curl -s -b cookies.txt http://localhost:5000/api/auth/me
 ```
 
-Forgot password (always `{ "ok": true }`):
+### People directory (Follow / Unfollow)
 
-```bash
-curl -s -X POST http://localhost:5000/api/auth/forgot-password \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"ayesha@example.com"}'
-```
-
-Reset password:
-
-```bash
-curl -s -X POST http://localhost:5000/api/auth/reset-password \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"ayesha@example.com","otp":"123456","password":"newpass12"}'
-```
-
-Logout:
-
-```bash
-curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:5000/api/auth/logout
-```
-
-List devices and sign out one session (`DELETE` on the current id is the same as logout):
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/auth/sessions
-curl -s -b cookies.txt -c cookies.txt -X DELETE http://localhost:5000/api/auth/sessions/SESSION_ID
-```
-
-## Users examples
-
-Current profile (settings screen):
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/users/me
-```
-
-Update name, username, role, location, or avatar tone:
-
-```bash
-curl -s -b cookies.txt -X PATCH http://localhost:5000/api/users/me \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Md Parvej","username":"parvej","role":"Full-stack developer","location":"Dhaka","tone":"a"}'
-```
-
-All registered people for Follow / Unfollow (`GET /api/users`). Same list as `GET /api/contacts`. Any signed-in user can call it. Each row has `following`. Follow saves them and opens a DM so they appear in `GET /api/conversations`.
+Any signed-in user sees **everyone** except self and blocked accounts. Follow saves a contact and opens a DM.
 
 ```bash
 curl -s -b cookies.txt 'http://localhost:5000/api/users'
-curl -s -b cookies.txt 'http://localhost:5000/api/users?q=nadia&limit=200'
-```
-
-Search people (create-group picker):
-
-```bash
-curl -s -b cookies.txt 'http://localhost:5000/api/users/search?q=nadia&limit=20'
-```
-
-Heartbeat / presence (`online`, `away`, or `offline`):
-
-```bash
-curl -s -b cookies.txt -X PATCH http://localhost:5000/api/users/me/presence \
-  -H 'Content-Type: application/json' \
-  -d '{"presence":"online"}'
-```
-
-Public profile and people currently online:
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/users/online
-curl -s -b cookies.txt http://localhost:5000/api/users/by-username/nadia
-```
-
-`GET /api/auth/me` and `PATCH /api/auth/profile` still work; they call the Users service.
-
-## Contacts examples
-
-Contacts is a **people directory** plus **follow**. `GET /api/contacts` returns every registered user except yourself and blocked accounts. Each row has `following: true|false` so the UI can show Follow or Unfollow.
-
-Follow someone to put them on your chat list and start a DM. Unfollow hides an empty chat; if you already exchanged messages, the conversation stays until you delete it. Deleting a conversation also unfollows.
-
-All people (`GET /api/contacts`) — no follow required to see the list. Optional `q`, `presence=online|away|offline`, `limit` (default 200, max 500). Saved contacts (people you follow) are `GET /api/contacts/following`:
-
-```bash
-curl -s -b cookies.txt 'http://localhost:5000/api/contacts'
-curl -s -b cookies.txt 'http://localhost:5000/api/contacts?q=nadia'
-curl -s -b cookies.txt http://localhost:5000/api/contacts/online
-curl -s -b cookies.txt http://localhost:5000/api/contacts/following
-```
-
-Follow (201 if new, 200 if already following). Opens a direct chat:
-
-```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"nadia"}'
-
 curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts/USER_ID/follow
-```
-
-Unfollow, open chat, delete the conversation (also unfollows):
-
-```bash
 curl -s -b cookies.txt -X DELETE http://localhost:5000/api/contacts/USER_ID
-curl -s -b cookies.txt -X POST http://localhost:5000/api/contacts/USER_ID/chat
-curl -s -b cookies.txt -X DELETE http://localhost:5000/api/conversations/CONVERSATION_ID
-curl -s -b cookies.txt http://localhost:5000/api/contacts/invite-link
+curl -s -b cookies.txt http://localhost:5000/api/conversations
 ```
 
-Messages include `seenBy`: who has read the message (`id`, `name`, `username`, `at`). `status` is still `sent` / `delivered` / `seen`. Recipients with `readReceipts` off are not listed.
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/conversations/CONVERSATION_ID/messages
-```
-
-## Blocks examples
-
-Blocked people cannot message or call you (1:1). They are hidden from Contacts, user search, and conversation search. The conversation row stays; sending and calling return 403 `You cannot message this person`. Adding a contact that is blocked is 403 `You cannot add this person`. Group add skips blocked people instead of failing the whole request.
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/blocks
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/blocks \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"nadia"}'
-
-curl -s -b cookies.txt -X DELETE http://localhost:5000/api/blocks/USER_ID
-```
-
-## Settings examples
-
-Appearance, notifications, sounds, and privacy live on `User.settings`. Profile photo, blocks, and device sign-out stay on their own routes. `isOwner` is returned so the client can show Advanced settings; this module does not ban other users.
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/settings
-
-curl -s -b cookies.txt -X PATCH http://localhost:5000/api/settings \
-  -H 'Content-Type: application/json' \
-  -d '{"reduceMotion":true,"videoQuality":"1080p"}'
-
-curl -s -b cookies.txt http://localhost:5000/api/settings/sounds
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/settings/delete-account
-
-curl -s -X POST http://localhost:5000/api/settings/delete-account/confirm \
-  -H 'Content-Type: application/json' \
-  -d '{"token":"TOKEN"}'
-```
-
-## Admin examples
-
-Owner-only tools for other accounts (`isOwner` required). Non-owners get 403 `This area is only for the owner.` You cannot ban, unban, or delete the owner.
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/admin/users
-
-curl -s -b cookies.txt 'http://localhost:5000/api/admin/users?q=nadia&status=all'
-
-curl -s -b cookies.txt http://localhost:5000/api/admin/users/USER_ID
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/admin/users/USER_ID/ban
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/admin/users/USER_ID/unban
-
-curl -s -b cookies.txt -X DELETE http://localhost:5000/api/admin/users/USER_ID
-```
-
-## Notifications examples
-
-In-app rows for messages, incoming/missed calls, and being added to a group. `messageNotifications: false` and muted chats skip the row (unread on the conversation still updates). Missed-call email only if the person has been offline at least 30 minutes. `unreadDigest` queues one hourly summary email instead of per-message mail (v1 has no per-message SMTP).
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/notifications
-
-curl -s -b cookies.txt 'http://localhost:5000/api/notifications?unreadOnly=true&limit=30'
-
-curl -s -b cookies.txt http://localhost:5000/api/notifications/unread-count
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/notifications/read \
-  -H 'Content-Type: application/json' \
-  -d '{}'
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/notifications/NOTIFICATION_ID/read
-```
-
-## Conversations examples
-
-List chats (chips: `all`, `unread`, `groups`, `archived`; `calls` returns `[]` until Calls exist):
-
-```bash
-curl -s -b cookies.txt 'http://localhost:5000/api/conversations?filter=all&limit=50'
-```
-
-Start a direct chat (200 if it already exists, otherwise 201):
-
-```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/direct \
-  -H 'Content-Type: application/json' \
-  -d '{"userId":"64a000000000000000000002"}'
-```
-
-Create a group (name + at least 3 other people; you become admin):
-
-```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/groups \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Frontend Guild","memberIds":["64a000000000000000000002","64a000000000000000000003","64a000000000000000000004"]}'
-```
-
-Pin to top and mark a thread read:
-
-```bash
-curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSATION_ID/membership \
-  -H 'Content-Type: application/json' \
-  -d '{"pinned":true}'
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/read
-```
-
-## Groups examples
-
-Membership after a group exists (`POST /api/conversations/groups` stays on Conversations). Direct chats return 400. Create-time `MIN_GROUP_MEMBERS = 3` is not re-checked after people leave. If the last remaining member leaves, the conversation stays in Mongo with zero active members (no `archivedAt`); list/`GET :id` is 404 for former members.
-
-List members (you first, then admins, then name):
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/conversations/CONVERSATION_ID/members
-```
-
-Add people (admin; 201 if anyone new joined, otherwise 200):
-
-```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/members \
-  -H 'Content-Type: application/json' \
-  -d '{"userIds":["64a000000000000000000005"]}'
-```
-
-Make admin / remove admin (admin; cannot change your own role here):
-
-```bash
-curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSATION_ID/members/USER_ID/admin \
-  -H 'Content-Type: application/json' \
-  -d '{"isAdmin":true}'
-
-curl -s -b cookies.txt -X PATCH http://localhost:5000/api/conversations/CONVERSATION_ID/members/USER_ID/admin \
-  -H 'Content-Type: application/json' \
-  -d '{"isAdmin":false}'
-```
-
-Remove a member (admin; cannot remove yourself — leave instead):
-
-```bash
-curl -s -b cookies.txt -X DELETE http://localhost:5000/api/conversations/CONVERSATION_ID/members/USER_ID
-```
-
-Leave (any member). If you are the last admin and others remain, the longest-tenured remaining member is promoted first:
-
-```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/leave
-```
-
-## Messages examples
-
-List a thread (oldest → newest in the page). `view=pinned` filters pins; `q` searches text, caption, and file name:
-
-```bash
-curl -s -b cookies.txt 'http://localhost:5000/api/conversations/CONVERSATION_ID/messages?limit=30'
-
-curl -s -b cookies.txt 'http://localhost:5000/api/conversations/CONVERSATION_ID/messages?view=pinned&q=waveform'
-```
-
-Send a text message (201). Attachments are multipart on the same path: field `file` (one file) and/or `files` (up to 10). Any format is allowed — PDF, Word, Excel, images, video from the device, zip, etc. Each file can be up to 50 MB (images 10 MB). Optional `links` for Google Docs / Sheets / any https URL. `type` can be `text`, `image`, `file`, `voice`, `video`, or `video_note`; if omitted, the API infers it.
+### Messages & files
 
 ```bash
 curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/messages \
@@ -389,66 +236,69 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSAT
   -F 'links=["https://docs.google.com/document/d/abc"]'
 ```
 
-The response includes `attachments[]` (`url`, `fileName`, `fileSize`, `mimeType`, `kind`: `image` | `video` | `file` | `link`). `mediaUrl` is the first attachment for older clients.
-
-React, pin, or delete. `scope=me` (default) hides the message **only for you**; the other person still sees it. Anyone in the chat can do that on any message. `scope=everyone` removes it for all members and is allowed only for the sender:
+Response includes `attachments[]` (`kind`: `image` | `video` | `file` | `link`). `mediaUrl` is the first file for older clients.
 
 ```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/messages/MESSAGE_ID/reactions \
-  -H 'Content-Type: application/json' \
-  -d '{"emoji":"🔥"}'
-
-curl -s -b cookies.txt -X POST http://localhost:5000/api/messages/MESSAGE_ID/pin
-
 curl -s -b cookies.txt -X DELETE 'http://localhost:5000/api/messages/MESSAGE_ID?scope=me'
 curl -s -b cookies.txt -X DELETE 'http://localhost:5000/api/messages/MESSAGE_ID?scope=everyone'
 ```
 
-Mark delivered / seen (seen also clears unread via the same path as `POST /conversations/:id/read`):
+### More endpoints
+
+Forgot / reset password, profile, presence, blocks, groups, calls, settings, admin, and notifications — copy-paste curls live in the sections below.
+
+<details>
+<summary>Auth, users, contacts, blocks, settings, admin, notifications</summary>
 
 ```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/delivered
-curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/seen
+# password reset always returns { "ok": true }
+curl -s -X POST http://localhost:5000/api/auth/forgot-password \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ayesha@example.com"}'
+
+curl -s -b cookies.txt http://localhost:5000/api/auth/sessions
+curl -s -b cookies.txt -X PATCH http://localhost:5000/api/users/me \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Md Parvej","username":"parvej","role":"Full-stack developer","location":"Dhaka","tone":"a"}'
+
+curl -s -b cookies.txt http://localhost:5000/api/contacts/following
+curl -s -b cookies.txt http://localhost:5000/api/blocks
+curl -s -b cookies.txt http://localhost:5000/api/settings
+curl -s -b cookies.txt http://localhost:5000/api/admin/users
+curl -s -b cookies.txt http://localhost:5000/api/notifications
 ```
 
-REST history DTOs include `dir` (`in` | `out`) relative to you. Socket payloads are canonical: same fields, plus `senderId` instead of `dir`. Map locally with `dir = message.senderId === me ? "out" : "in"`. Reaction objects on the socket may include `userIds` so the client can set `mine`. Call chips in the thread use `kind: "call"` with `missed`, `label`, `meta`, and `callId`.
+Owner-only admin: non-owners get `403` `This area is only for the owner.`
 
-## Calls examples
+</details>
 
-Nest is the signaling server only (STUN from env, optional TURN). Media is WebRTC peer-to-peer; group calls mesh in the same socket room. Ring timeout is `CALL_RING_TIMEOUT_MS` (default 35s) → `missed`. History sections use `startedAt` in UTC unless you pass `tz` (IANA). One ringing/active call per user; a second start is `409 Already in a call`.
-
-Start (201). Callees get `call:incoming`:
+<details>
+<summary>Conversations, groups, calls</summary>
 
 ```bash
+curl -s -b cookies.txt 'http://localhost:5000/api/conversations?filter=all&limit=50'
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/direct \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"64a000000000000000000002"}'
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/groups \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Frontend Guild","memberIds":["ID2","ID3","ID4"]}'
+
 curl -s -b cookies.txt -X POST http://localhost:5000/api/calls \
   -H 'Content-Type: application/json' \
   -d '{"conversationId":"CONVERSATION_ID","type":"video"}'
 ```
 
-Accept / decline / end:
+Group create requires **3 other people**. Calls: one ringing/active call per user (`409 Already in a call`). Ring timeout `CALL_RING_TIMEOUT_MS` (default 35s) → missed.
 
-```bash
-curl -s -b cookies.txt -X POST http://localhost:5000/api/calls/CALL_ID/accept
-curl -s -b cookies.txt -X POST http://localhost:5000/api/calls/CALL_ID/decline
-curl -s -b cookies.txt -X POST http://localhost:5000/api/calls/CALL_ID/end \
-  -H 'Content-Type: application/json' \
-  -d '{"ice":"p2p"}'
-```
+</details>
 
-Live call, history (`filter=all|missed|voice|video`), and connection-quality card:
-
-```bash
-curl -s -b cookies.txt http://localhost:5000/api/calls/CALL_ID
-curl -s -b cookies.txt 'http://localhost:5000/api/calls?filter=all&limit=50'
-curl -s -b cookies.txt 'http://localhost:5000/api/calls?filter=missed&tz=Asia/Dhaka'
-curl -s -b cookies.txt http://localhost:5000/api/calls/quality
-```
-
-Frontend flow: `POST /api/calls` → callee overlay on `call:incoming` → `POST accept` → `/call?type=&callId=` → both `call:join` and exchange `webrtc:offer` / `webrtc:answer` / `webrtc:ice` → `POST end`.
+---
 
 ## Socket.IO
 
-Same origin and port as HTTP is fine (`http://localhost:5000`), path `/socket.io`. CORS origin is `FRONTEND_URL` with credentials. Auth is the `cw_session` cookie **or** `handshake.auth.token` / `Authorization: Bearer` JWT (`sub` + `sid`).
+Same host as HTTP, path `/socket.io`. CORS origin = `FRONTEND_URL`. Auth: `cw_session` **or** `handshake.auth.token` / `Authorization: Bearer`.
 
 ```ts
 import { io } from "socket.io-client"
@@ -462,45 +312,56 @@ socket.emit("conversation:join", { conversationId })
 socket.on("message:new", handler)
 ```
 
-| Client emit | Payload | Server emit | Payload |
-| --- | --- | --- | --- |
-| `conversation:join` | `{ conversationId }` | `conversation:joined` | `{ conversationId }` |
-| `conversation:leave` | `{ conversationId }` | | |
-| `message:send` | `{ conversationId, type: "text", text, replyTo?, clientId? }` | `message:new` | `{ message }` canonical |
-| | | ACK | `{ ok, message, clientId }` viewer DTO (`dir: "out"`) |
-| `typing:start` / `typing:stop` | `{ conversationId }` | `typing` | `{ conversationId, userId, name, typing }` |
-| `message:delivered` | `{ conversationId, messageId? }` | `receipts:updated` | `{ conversationId, messageId, receipts }` |
-| `message:seen` | `{ conversationId, messageId? }` | `receipts:updated` | same |
-| | | `message:updated` | `{ message }` pin / reaction |
-| | | `message:deleted` | `{ id, conversationId, scope: "me" \| "everyone" }` |
-| | | `conversation:preview` | `{ conversationId, preview, previewIcon, lastMessageAt, unread }` to `user:{id}` |
-| | | `group:updated` | `{ conversationId, members, status, sub }` to the thread and each member’s `user:{id}` |
-| | | `group:member-left` | `{ conversationId, userId, reason: "left" \| "removed" }` |
-| | | `conversation:removed` | `{ conversationId }` to the leaver / kicked user’s `user:{id}` (drop from the sidebar) |
-| | | `user:blocked` | `{ userId }` to both `user:{id}` rooms after a block |
-| | | `auth:banned` | `{ error }` on `user:{id}` before the owner-ban disconnect |
-| | | `notification:new` | `{ notification }` NotificationDto on `user:{id}` after insert |
-| | | `notification:badge` | `{ unreadCount }` on `user:{id}` |
-| `call:join` | `{ callId }` | `call:incoming` | `{ call }` CallDto to each callee’s `user:{id}` |
-| `call:leave` | `{ callId }` | `call:accepted` | `{ callId, userId }` |
-| `webrtc:offer` | `{ callId, toUserId, sdp }` | `webrtc:offer` | forwarded to `user:{toUserId}` (SDP not stored) |
-| `webrtc:answer` | `{ callId, toUserId, sdp }` | `webrtc:answer` | same |
-| `webrtc:ice` | `{ callId, toUserId, candidate }` | `webrtc:ice` | same |
-| `call:media` | `{ callId, muted?, cameraOff? }` | `call:media` | UI-only, call room |
-| | | `call:declined` | `{ callId, userId }` |
-| | | `call:ended` | `{ callId, status, durationSec }` |
-| | | `call:missed` | `{ callId }` after ring timeout or caller hangup while ringing |
-| | | `call:participant` | `{ callId, userId, action: "joined" \| "left" }` |
-| | | `call:started` | `{ conversationId, callId }` on the thread room |
+Rooms: `conversation:{id}` (open thread), `user:{id}` (sidebar / incoming ring), `call:{id}` after `call:join`. Upload media with REST; the server broadcasts `message:new`. Text can go REST or `message:send`.
 
-Rooms: `conversation:{conversationId}` (open thread), `user:{userId}` (sidebar / incoming ring), and `call:{callId}` after `call:join`. Upload media with REST; the server broadcasts `message:new`. Text can go through REST or `message:send` — both use `MessagesService.send`.
+| Client emit | Server emit |
+| --- | --- |
+| `conversation:join` / `leave` | `conversation:joined`, `conversation:preview`, `conversation:removed` |
+| `message:send` | `message:new`, ACK `{ ok, message, clientId }` |
+| `typing:start` / `stop` | `typing` |
+| `message:delivered` / `seen` | `receipts:updated` |
+| | `message:updated`, `message:deleted` `{ scope: "me" \| "everyone" }` |
+| `call:join` / `leave`, `webrtc:offer` / `answer` / `ice` | `call:incoming`, `call:ended`, forwarded SDP/ICE |
+| | `notification:new`, `notification:badge`, `user:blocked`, `auth:banned` |
 
-## Env
+REST message DTOs include `dir` (`in` \| `out`). Socket payloads use `senderId` instead of `dir`.
 
-See `.env.example` for `PORT`, `FRONTEND_URL`, `API_URL`, Mongo, Redis, JWT/session secrets, Google, GitHub, SMTP, Cloudinary, `STUN_URL`, optional `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL`, and `CALL_RING_TIMEOUT_MS`.
+---
 
-## Tests
+## Environment
 
-```bash
-pnpm test
-```
+See `.env.example`: `PORT`, `FRONTEND_URL`, `API_URL`, Mongo, Redis, `JWT_SECRET`, `SESSION_SECRET`, Google, GitHub, SMTP, Cloudinary, `STUN_URL`, optional TURN, `CALL_RING_TIMEOUT_MS`.
+
+Cross-site cookies (e.g. Vercel frontend + Render API): `SameSite=None; Secure` when origins differ in production.
+
+---
+
+## Deploy (Render)
+
+Do **not** start with `nest start` on a small instance (it recompiles and OOMs).
+
+| | |
+| --- | --- |
+| Build | `pnpm install --frozen-lockfile --prod=false && pnpm run build` |
+| Start | `pnpm start` (`node dist/main`) |
+| Health | `/` |
+| Node | 22 |
+
+Set `NODE_ENV=production`, `FRONTEND_URL`, `API_URL`, `MONGODB_URI`, `REDIS_URL` (`REDIS_TLS` if needed), secrets. Atlas network: `0.0.0.0/0` or Render egress IPs. Nest binds a port only after Mongo connects.
+
+OAuth callbacks: `{API_URL}/api/auth/google/callback` and `{API_URL}/api/auth/github/callback`.
+
+---
+
+## Author
+
+**Md Parvej** — full-stack developer. ChatWave is a portfolio project: production-shaped chat backend (auth, realtime, media, calls, moderation).
+
+- GitHub: [parvejme24/chatwave-backend](https://github.com/parvejme24/chatwave-backend)
+- Live: [chatwave-backend-z7n1.onrender.com](https://chatwave-backend-z7n1.onrender.com)
+
+---
+
+## License
+
+Private / unlicensed coursework-style portfolio code unless you add a license file.
