@@ -9,7 +9,7 @@ import { ConversationsService } from '../conversations/conversations.service';
 import { UsersService } from '../users/users.service';
 import { Message } from './message.schema';
 import { MessagesService } from './messages.service';
-import { seenByFromReceipts } from './messages.constants';
+import { seenByFromReceipts, collectUploads, coerceLinks } from './messages.constants';
 
 const A = '64a000000000000000000001';
 const B = '64a000000000000000000002';
@@ -65,6 +65,7 @@ function msg(overrides: Record<string, unknown> = {}) {
 describe('MessagesService', () => {
   let service: MessagesService;
   const model = { find: jest.fn(), findById: jest.fn(), create: jest.fn() };
+  const cloudinary = { uploadFile: jest.fn(), deleteAsset: jest.fn() };
   const conversations = {
     assertMember: jest.fn(),
     bumpFromMessage: jest.fn(),
@@ -81,6 +82,14 @@ describe('MessagesService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    cloudinary.uploadFile.mockResolvedValue({
+      url: 'https://cdn.example/a',
+      publicId: 'p1',
+      bytes: 12,
+      width: 0,
+      height: 0,
+      duration: 0,
+    });
     conversations.assertMember.mockResolvedValue(convo());
     conversations.getById.mockResolvedValue(convo());
     users.findByIds.mockResolvedValue([{ id: A, name: 'Rakib Islam', username: 'rakib', initials: 'RI', tone: 'c', photoUrl: null }]);
@@ -92,7 +101,7 @@ describe('MessagesService', () => {
         { provide: getModelToken(Message.name), useValue: model },
         { provide: ConversationsService, useValue: conversations },
         { provide: UsersService, useValue: users },
-        { provide: CloudinaryService, useValue: { uploadFile: jest.fn(), deleteAsset: jest.fn() } },
+        { provide: CloudinaryService, useValue: cloudinary },
         { provide: RedisService, useValue: { tooMany: jest.fn().mockResolvedValue(false) } },
         { provide: BlocksService, useValue: blocks },
       ],
@@ -202,5 +211,59 @@ describe('MessagesService', () => {
         at: at.toISOString(),
       },
     ]);
+  });
+
+  it('uploads mixed files and infers types', async () => {
+    model.create.mockImplementation(async (doc: Record<string, unknown>) =>
+      msg({
+        type: doc.type,
+        caption: doc.caption,
+        media: doc.media,
+        attachments: doc.attachments,
+      }),
+    );
+    const result = await service.send(viewer, CONV, { type: 'file', caption: 'pack' }, [
+      { buffer: Buffer.from('%PDF'), mimetype: 'application/pdf', size: 4, originalname: 'notes.pdf' },
+      { buffer: Buffer.from('mp4'), mimetype: 'video/mp4', size: 8, originalname: 'demo.mp4' },
+    ]);
+    expect(cloudinary.uploadFile).toHaveBeenCalledTimes(2);
+    expect(model.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'file',
+        caption: 'pack',
+        attachments: [
+          expect.objectContaining({ fileName: 'notes.pdf', kind: 'file', mimeType: 'application/pdf' }),
+          expect.objectContaining({ fileName: 'demo.mp4', kind: 'video', mimeType: 'video/mp4' }),
+        ],
+      }),
+    );
+    expect(result.attachments).toHaveLength(2);
+    expect(result.attachments[1].kind).toBe('video');
+  });
+
+  it('stores https links without uploading them', async () => {
+    model.create.mockImplementation(async (doc: Record<string, unknown>) =>
+      msg({ type: doc.type, media: doc.media, attachments: doc.attachments }),
+    );
+    await service.send(viewer, CONV, {
+      type: 'file',
+      links: ['https://docs.google.com/spreadsheets/d/abc'],
+    });
+    expect(cloudinary.uploadFile).not.toHaveBeenCalled();
+    expect(model.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: [expect.objectContaining({ kind: 'link', url: 'https://docs.google.com/spreadsheets/d/abc' })],
+      }),
+    );
+  });
+
+  it('collects file and files fields and keeps valid links', () => {
+    expect(
+      collectUploads({
+        file: [{ buffer: Buffer.from('a'), mimetype: 'image/png', size: 1, originalname: 'a.png' }],
+        files: [{ buffer: Buffer.from('b'), mimetype: 'application/pdf', size: 1, originalname: 'b.pdf' }],
+      }).map((item) => item.originalname),
+    ).toEqual(['a.png', 'b.pdf']);
+    expect(coerceLinks('["https://docs.google.com/document/d/1"]')).toEqual(['https://docs.google.com/document/d/1']);
   });
 });

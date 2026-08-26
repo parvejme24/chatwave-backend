@@ -22,12 +22,17 @@ import type { AuthViewer } from '../users/users.constants';
 import { UserDocument } from '../users/user.schema';
 import { UsersService } from '../users/users.service';
 import {
+  FILES_MAX,
   FILE_MAX,
   MEDIA,
   TEXT_MAX,
+  attachmentKind,
+  cloudinaryResource,
+  coerceLinks,
   isMongoId,
   seenByFromReceipts,
   stripHtml,
+  toMessageAttachment,
   toViewerDto,
   type CanonicalMessage,
   type DeleteScope,
@@ -85,11 +90,28 @@ export class MessagesService {
     return { messages: mapped.map((m) => toViewerDto(m, viewer.id)), nextCursor: hasMore ? page[0]?.id ?? null : null };
   }
 
-  async send(viewer: AuthViewer, conversationId: string, dto: SendMessageDto, file?: UploadedChatFile) {
-    if (file || dto.type !== 'text') {
-      const media = await this.upload(dto, file);
-      return this.persist(viewer, conversationId, { type: dto.type, caption: stripHtml(dto.caption ?? '').slice(0, 1000), replyTo: dto.replyTo, media });
+  async send(viewer: AuthViewer, conversationId: string, dto: SendMessageDto, files: UploadedChatFile[] = []) {
+    const links = coerceLinks(dto.links);
+    const uploads = files.filter((file) => file?.buffer?.length);
+    if (uploads.length + links.length > FILES_MAX) {
+      throw new BadRequestException({ error: `You can attach up to ${FILES_MAX} files or links` });
     }
+    if (uploads.length || links.length) {
+      const attachments = [
+        ...(await Promise.all(uploads.map((file, index) => this.uploadOne(dto, file, index === 0)))),
+        ...links.map((href) => linkAttachment(href)),
+      ];
+      const type = messageTypeFor(dto.type, attachments);
+      const caption = stripHtml(dto.caption || dto.text || '').slice(0, 1000);
+      return this.persist(viewer, conversationId, {
+        type,
+        caption,
+        replyTo: dto.replyTo,
+        media: attachments[0],
+        attachments,
+      });
+    }
+    if ((dto.type ?? 'text') !== 'text') throw new BadRequestException({ error: 'Attach a file to send' });
     const text = stripHtml(dto.text ?? '');
     if (!text) throw new BadRequestException({ error: 'Write a message first' });
     if (text.length > TEXT_MAX) throw new BadRequestException({ error: 'That message is too long' });
@@ -226,8 +248,17 @@ export class MessagesService {
       row.deletedAt = new Date();
       row.deletedBy = oid(viewer.id);
       await row.save();
-      if (row.media?.publicId) {
-        await this.cloudinary.deleteAsset(row.media.publicId, row.type === 'image' ? 'image' : row.type === 'file' ? 'raw' : 'video');
+      if (row.media?.publicId || (row.attachments ?? []).some((item) => item.publicId)) {
+        const assets = [row.media, ...(row.attachments ?? [])].filter((item) => item?.publicId);
+        const seen = new Set<string>();
+        for (const asset of assets) {
+          if (!asset.publicId || seen.has(asset.publicId)) continue;
+          seen.add(asset.publicId);
+          await this.cloudinary.deleteAsset(
+            asset.publicId,
+            cloudinaryResource(attachmentKind(asset.mimeType ?? '', asset.url)),
+          );
+        }
       }
       this.live?.emitDeleted(row.id, String(row.conversation), 'everyone');
       return { ok: true as const };
@@ -286,7 +317,14 @@ export class MessagesService {
   private async persist(
     viewer: AuthViewer,
     conversationId: string,
-    input: { type: MessageType; text?: string; caption?: string; replyTo?: string; media?: MessageDocument['media'] },
+    input: {
+      type: MessageType;
+      text?: string;
+      caption?: string;
+      replyTo?: string;
+      media?: MessageDocument['media'];
+      attachments?: MessageDocument['attachments'];
+    },
   ) {
     const user = await this.users.findActiveById(viewer.id);
     if (!user) throw new ForbiddenException({ error: 'Your account cannot send messages' });
@@ -318,10 +356,19 @@ export class MessagesService {
       text: input.text ?? '',
       caption: input.caption ?? '',
       media: input.media ?? {},
+      attachments: input.attachments ?? (input.media?.url ? [input.media] : []),
       replyTo,
       receipts: [{ user: oid(viewer.id), status: 'sent', at: new Date() }],
     });
-    const preview = label(input.type, input.caption || input.text || '', row.media?.fileName, row.media?.duration, user.name, conversation.type === 'group');
+    const preview = label(
+      input.type,
+      input.caption || input.text || '',
+      row.media?.fileName,
+      row.media?.duration,
+      user.name,
+      conversation.type === 'group',
+      (row.attachments ?? []).length || (row.media?.url ? 1 : 0),
+    );
     const bumped = await this.conversations.bumpFromMessage(conversationId, {
       senderId: viewer.id,
       preview,
@@ -358,27 +405,34 @@ export class MessagesService {
     return toViewerDto(message, viewer.id);
   }
 
-  private async upload(dto: SendMessageDto, file?: UploadedChatFile) {
-    const rule = dto.type in MEDIA ? MEDIA[dto.type as keyof typeof MEDIA] : null;
-    if (!rule) throw new BadRequestException({ error: 'Pick a valid attachment type' });
-    if (!file?.buffer?.length) throw new BadRequestException({ error: 'Attach a file to send' });
+  private async uploadOne(dto: SendMessageDto, file: UploadedChatFile, primary: boolean) {
+    const mime = file.mimetype || 'application/octet-stream';
+    const slot = uploadSlot(dto.type, mime);
+    const rule = MEDIA[slot];
     if (file.size > rule.max || file.size > FILE_MAX) throw new BadRequestException({ error: rule.error });
-    if (rule.mime && !rule.mime.includes(file.mimetype)) throw new BadRequestException({ error: rule.error });
+    if (rule.prefix && !mime.startsWith(rule.prefix) && !(rule.mime && rule.mime.includes(mime))) {
+      throw new BadRequestException({ error: rule.error });
+    }
+    if (rule.mime && !rule.prefix && !rule.mime.includes(mime)) {
+      throw new BadRequestException({ error: rule.error });
+    }
+    const kind = attachmentKind(mime);
     const uploaded = await this.cloudinary.uploadFile(file.buffer, {
       folder: rule.folder,
-      resourceType: rule.resource,
-      fileName: dto.type === 'file' ? fileName(file.originalname) : undefined,
+      resourceType: cloudinaryResource(slot === 'voice' || slot === 'video_note' ? slot : kind),
+      fileName: fileName(file.originalname),
     });
     return {
       url: uploaded.url,
       publicId: uploaded.publicId,
       fileName: fileName(file.originalname),
       fileSize: fileSize(file.size || uploaded.bytes),
-      mimeType: file.mimetype,
-      duration: dto.duration && dto.duration > 0 ? dto.duration : uploaded.duration,
+      mimeType: mime,
+      duration: primary && dto.duration && dto.duration > 0 ? dto.duration : uploaded.duration,
       seed: 0,
       width: uploaded.width,
       height: uploaded.height,
+      kind,
     };
   }
 
@@ -435,6 +489,13 @@ export class MessagesService {
       ? replies?.get(String(row.replyTo)) ?? (await this.messages.findById(row.replyTo).exec())
       : null;
     const who = reply?.sender ? people.get(String(reply.sender)) : undefined;
+    const mediaItems = row.attachments?.length
+      ? row.attachments
+      : row.media?.url
+        ? [row.media]
+        : [];
+    const primary = mediaItems[0] ?? row.media;
+    const attachments = mediaItems.filter((item) => item?.url).map((item) => toMessageAttachment(item));
     return {
       id: row.id,
       conversationId: String(row.conversation),
@@ -447,11 +508,12 @@ export class MessagesService {
       callId: row.callId ? String(row.callId) : undefined,
       text: row.text ?? '',
       caption: row.caption ?? '',
-      fileName: row.media?.fileName ?? '',
-      fileSize: row.media?.fileSize ?? '',
-      duration: row.media?.duration ?? 0,
-      seed: row.media?.seed ?? 0,
-      mediaUrl: row.media?.url ?? '',
+      fileName: primary?.fileName ?? '',
+      fileSize: primary?.fileSize ?? '',
+      duration: primary?.duration ?? 0,
+      seed: primary?.seed ?? 0,
+      mediaUrl: primary?.url ?? '',
+      attachments,
       time: (row.createdAt ?? new Date()).toISOString(),
       status: ticks(row.receipts, senderId, this.conversations.activeMemberIds(conversation)),
       seenBy: seenByFromReceipts(row.receipts, senderId, people),
@@ -498,23 +560,71 @@ function duration(seconds = 0) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-function snippet(type: string, text: string, fileName?: string, seconds?: number) {
+function snippet(type: string, text: string, fileName?: string, seconds?: number, count = 1) {
   if (type === 'call') return text || 'Call';
+  if (count > 1) return type === 'image' ? `${count} photos` : `${count} files`;
   if (type === 'voice') return `Voice message · ${duration(seconds)}`;
   if (type === 'video_note') return `Video note · ${duration(seconds)}`;
+  if (type === 'video') return seconds ? `Video · ${duration(seconds)}` : 'Video';
   if (type === 'image') return 'Photo';
   if (type === 'file') return fileName || 'File';
   const value = (text || 'Message').replace(/\s+/g, ' ').trim();
   return value.length > 80 ? `${value.slice(0, 79)}…` : value;
 }
 
-function label(type: string, text: string, fileName: string | undefined, seconds: number | undefined, senderName: string, group: boolean) {
-  const value = snippet(type, text, fileName, seconds);
+function label(
+  type: string,
+  text: string,
+  fileName: string | undefined,
+  seconds: number | undefined,
+  senderName: string,
+  group: boolean,
+  count = 1,
+) {
+  const value = snippet(type, text, fileName, seconds, count);
   return type === 'system' || !group ? value : `${senderName}: ${value}`;
 }
 
 function icon(type: string): PreviewIcon | null {
-  return type === 'voice' ? 'mic' : type === 'video_note' ? 'video' : type === 'image' ? 'image' : null;
+  return type === 'voice' ? 'mic' : type === 'video_note' || type === 'video' ? 'video' : type === 'image' ? 'image' : null;
+}
+
+function uploadSlot(declared: SendMessageDto['type'] | undefined, mime: string): keyof typeof MEDIA {
+  if (declared === 'voice' || declared === 'video_note' || declared === 'image' || declared === 'video') return declared;
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'voice';
+  return 'file';
+}
+
+function messageTypeFor(declared: SendMessageDto['type'] | undefined, attachments: Array<{ kind?: string }>): MessageType {
+  if (declared === 'voice' || declared === 'video_note') return declared;
+  const kinds = new Set(attachments.map((item) => item.kind));
+  if (kinds.size === 1 && kinds.has('image')) return 'image';
+  if (kinds.size === 1 && kinds.has('video')) return 'video';
+  if (declared === 'image' || declared === 'video' || declared === 'file') return declared;
+  return 'file';
+}
+
+function linkAttachment(href: string) {
+  let name = 'Link';
+  try {
+    name = new URL(href).hostname.replace(/^www\./, '') || 'Link';
+  } catch {
+    name = 'Link';
+  }
+  return {
+    url: href,
+    publicId: '',
+    fileName: name.slice(0, 180),
+    fileSize: '',
+    mimeType: 'text/uri-list',
+    duration: 0,
+    seed: 0,
+    width: 0,
+    height: 0,
+    kind: 'link' as const,
+  };
 }
 
 function fileName(name?: string) {

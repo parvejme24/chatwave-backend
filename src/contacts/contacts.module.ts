@@ -8,6 +8,7 @@ import { UsersModule } from '../users/users.module';
 import { ContactsController } from './contacts.controller';
 import { ContactsService } from './contacts.service';
 import { Contact, ContactSchema } from './contact.schema';
+import { UsersDirectoryController } from './users-directory.controller';
 import { CONTACTS_ACTIONS } from '../blocks/blocks.constants';
 
 @Module({
@@ -18,7 +19,7 @@ import { CONTACTS_ACTIONS } from '../blocks/blocks.constants';
     forwardRef(() => BlocksModule),
     forwardRef(() => AuthModule),
   ],
-  controllers: [ContactsController],
+  controllers: [ContactsController, UsersDirectoryController],
   providers: [ContactsService, { provide: CONTACTS_ACTIONS, useExisting: ContactsService }],
   exports: [ContactsService, CONTACTS_ACTIONS],
 })

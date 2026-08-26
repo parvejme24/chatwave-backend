@@ -52,6 +52,9 @@ export class MessageMedia {
 
   @Prop({ default: 0 })
   height: number;
+
+  @Prop({ default: 'file' })
+  kind: string;
 }
 
 @Schema({ timestamps: true, collection: 'messages' })
@@ -73,6 +76,9 @@ export class Message {
 
   @Prop({ type: MessageMedia, default: () => ({}) })
   media: MessageMedia;
+
+  @Prop({ type: [MessageMedia], default: [] })
+  attachments: MessageMedia[];
 
   @Prop({ type: Types.ObjectId, ref: 'Message', default: null })
   replyTo: Types.ObjectId | null;

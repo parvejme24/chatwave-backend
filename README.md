@@ -148,7 +148,14 @@ curl -s -b cookies.txt -X PATCH http://localhost:5000/api/users/me \
   -d '{"name":"Md Parvej","username":"parvej","role":"Full-stack developer","location":"Dhaka","tone":"a"}'
 ```
 
-Search people (add-to-contacts / create-group picker — not the saved address book):
+All registered people for Follow / Unfollow (`GET /api/users`). Same list as `GET /api/contacts`. Any signed-in user can call it. Each row has `following`. Follow saves them and opens a DM so they appear in `GET /api/conversations`.
+
+```bash
+curl -s -b cookies.txt 'http://localhost:5000/api/users'
+curl -s -b cookies.txt 'http://localhost:5000/api/users?q=nadia&limit=200'
+```
+
+Search people (create-group picker):
 
 ```bash
 curl -s -b cookies.txt 'http://localhost:5000/api/users/search?q=nadia&limit=20'
@@ -367,13 +374,22 @@ curl -s -b cookies.txt 'http://localhost:5000/api/conversations/CONVERSATION_ID/
 curl -s -b cookies.txt 'http://localhost:5000/api/conversations/CONVERSATION_ID/messages?view=pinned&q=waveform'
 ```
 
-Send a text message (201). Media (`image`, `file`, `voice`, `video_note`) is multipart field `file` on the same path:
+Send a text message (201). Attachments are multipart on the same path: field `file` (one file) and/or `files` (up to 10). Any format is allowed — PDF, Word, Excel, images, video from the device, zip, etc. Each file can be up to 50 MB (images 10 MB). Optional `links` for Google Docs / Sheets / any https URL. `type` can be `text`, `image`, `file`, `voice`, `video`, or `video_note`; if omitted, the API infers it.
 
 ```bash
 curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/messages \
   -H 'Content-Type: application/json' \
   -d '{"type":"text","text":"the waveform looks good"}'
+
+curl -s -b cookies.txt -X POST http://localhost:5000/api/conversations/CONVERSATION_ID/messages \
+  -F 'type=file' \
+  -F 'caption=specs and clip' \
+  -F 'files=@notes.pdf' \
+  -F 'files=@demo.mp4' \
+  -F 'links=["https://docs.google.com/document/d/abc"]'
 ```
+
+The response includes `attachments[]` (`url`, `fileName`, `fileSize`, `mimeType`, `kind`: `image` | `video` | `file` | `link`). `mediaUrl` is the first attachment for older clients.
 
 React, pin, or delete. `scope=me` (default) hides the message **only for you**; the other person still sees it. Anyone in the chat can do that on any message. `scope=everyone` removes it for all members and is allowed only for the sender:
 

@@ -9,10 +9,10 @@ import { initialsFromName, isManagedUserHidden } from './users.constants';
 import { UsersService } from './users.service';
 
 function q<T>(value: T) {
-  const query = { select: jest.fn(), limit: jest.fn(), exec: jest.fn().mockResolvedValue(value) };
+  const query = { select: jest.fn(), limit: jest.fn(), sort: jest.fn(), exec: jest.fn().mockResolvedValue(value) };
   query.select.mockReturnValue(query);
   query.limit.mockReturnValue(query);
-  query.sort = jest.fn().mockReturnValue(query);
+  query.sort.mockReturnValue(query);
   return query;
 }
 

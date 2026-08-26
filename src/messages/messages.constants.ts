@@ -2,47 +2,72 @@ import { isValidObjectId, Types } from 'mongoose';
 
 import type { PreviewIcon } from '../conversations/conversations.constants';
 
-export const MESSAGE_TYPES = ['text', 'image', 'file', 'voice', 'video_note', 'system', 'call'] as const;
-export const SENDABLE_TYPES = ['text', 'image', 'file', 'voice', 'video_note'] as const;
+export const MESSAGE_TYPES = ['text', 'image', 'file', 'voice', 'video', 'video_note', 'system', 'call'] as const;
+export const SENDABLE_TYPES = ['text', 'image', 'file', 'voice', 'video', 'video_note'] as const;
 export const RECEIPT_STATUSES = ['sent', 'delivered', 'seen'] as const;
 export const TEXT_MAX = 4000;
-export const FILE_MAX = 20 * 1024 * 1024;
+export const FILE_MAX = 50 * 1024 * 1024;
+export const FILES_MAX = 10;
 
 export const MEDIA = {
   image: {
     folder: 'chatwave/messages/images',
-    max: 8 * 1024 * 1024,
-    mime: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+    max: 10 * 1024 * 1024,
+    mime: null as string[] | null,
+    prefix: 'image/',
     resource: 'image' as const,
-    error: 'Use a JPEG, PNG, WebP, or GIF under 8 MB',
+    error: 'Keep each image under 10 MB',
   },
   file: {
     folder: 'chatwave/messages/files',
-    max: 20 * 1024 * 1024,
+    max: FILE_MAX,
     mime: null as string[] | null,
+    prefix: null as string | null,
     resource: 'raw' as const,
-    error: 'Keep the file under 20 MB',
+    error: 'Keep each file under 50 MB',
   },
   voice: {
     folder: 'chatwave/messages/voice',
     max: 10 * 1024 * 1024,
-    mime: ['audio/webm', 'audio/mpeg', 'audio/ogg', 'audio/mp4'],
+    mime: ['audio/webm', 'audio/mpeg', 'audio/ogg', 'audio/mp4', 'audio/wav', 'audio/x-wav', 'audio/aac'],
+    prefix: 'audio/',
     resource: 'video' as const,
-    error: 'Use a WebM, MP3, OGG, or M4A clip under 10 MB',
+    error: 'Use an audio clip under 10 MB',
+  },
+  video: {
+    folder: 'chatwave/messages/video',
+    max: FILE_MAX,
+    mime: null as string[] | null,
+    prefix: 'video/',
+    resource: 'video' as const,
+    error: 'Keep each video under 50 MB',
   },
   video_note: {
     folder: 'chatwave/messages/video',
-    max: 20 * 1024 * 1024,
-    mime: ['video/webm', 'video/mp4'],
+    max: FILE_MAX,
+    mime: null as string[] | null,
+    prefix: 'video/',
     resource: 'video' as const,
-    error: 'Use a WebM or MP4 video under 20 MB',
+    error: 'Keep each video under 50 MB',
   },
 };
 
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 export type DeleteScope = 'me' | 'everyone';
-export type UploadedChatFile = { buffer: Buffer; mimetype: string; size: number; originalname?: string };
+export type AttachmentKind = 'image' | 'video' | 'file' | 'link';
+export type UploadedChatFile = { buffer: Buffer; mimetype: string; size: number; originalname?: string; fieldname?: string };
+
+export type MessageAttachment = {
+  url: string;
+  fileName: string;
+  fileSize: string;
+  mimeType: string;
+  duration: number;
+  width: number;
+  height: number;
+  kind: AttachmentKind;
+};
 
 export type ReceiptViewer = {
   id: string;
@@ -71,6 +96,7 @@ export type CanonicalMessage = {
   duration: number;
   seed: number;
   mediaUrl: string;
+  attachments: MessageAttachment[];
   time: string;
   status: ReceiptStatus | null;
   seenBy: ReceiptViewer[];
@@ -191,4 +217,82 @@ export function chatId(body: unknown) {
     if (typeof value === 'string') return value;
   }
   return '';
+}
+
+export function coerceLinks(value: unknown): string[] {
+  if (value == null || value === '') return [];
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? parseLinkString(value)
+      : [];
+  const links: string[] = [];
+  for (const item of items) {
+    if (typeof item !== 'string') continue;
+    const href = item.trim();
+    if (!/^https?:\/\//i.test(href) || href.length > 2000) continue;
+    links.push(href);
+    if (links.length >= FILES_MAX) break;
+  }
+  return links;
+}
+
+function parseLinkString(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [trimmed];
+    } catch {
+      return [trimmed];
+    }
+  }
+  return [trimmed];
+}
+
+export function collectUploads(uploaded?: { file?: UploadedChatFile[]; files?: UploadedChatFile[] } | UploadedChatFile[]) {
+  const list = Array.isArray(uploaded)
+    ? uploaded
+    : [...(uploaded?.file ?? []), ...(uploaded?.files ?? [])];
+  return list.filter((file) => file?.buffer?.length).slice(0, FILES_MAX);
+}
+
+export function attachmentKind(mime: string, href?: string): AttachmentKind {
+  if (href && !mime) return 'link';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime === 'text/uri-list') return 'link';
+  return 'file';
+}
+
+export function cloudinaryResource(kind: AttachmentKind | 'voice' | 'video_note'): 'image' | 'video' | 'raw' {
+  if (kind === 'image') return 'image';
+  if (kind === 'video' || kind === 'voice' || kind === 'video_note') return 'video';
+  return 'raw';
+}
+
+export function toMessageAttachment(row: {
+  url?: string;
+  fileName?: string;
+  fileSize?: string;
+  mimeType?: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  kind?: string;
+}): MessageAttachment {
+  const mime = row.mimeType ?? '';
+  const kind = (['image', 'video', 'file', 'link'] as const).includes(row.kind as AttachmentKind)
+    ? (row.kind as AttachmentKind)
+    : attachmentKind(mime, row.url);
+  return {
+    url: row.url ?? '',
+    fileName: row.fileName ?? '',
+    fileSize: row.fileSize ?? '',
+    mimeType: mime,
+    duration: row.duration ?? 0,
+    width: row.width ?? 0,
+    height: row.height ?? 0,
+    kind,
+  };
 }

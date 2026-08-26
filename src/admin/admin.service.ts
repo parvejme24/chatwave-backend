@@ -263,6 +263,6 @@ function messageTitle(text: string) {
 function mediaTitle(type: string) {
   if (type === 'image') return 'Sent a photo';
   if (type === 'voice') return 'Sent a voice note';
-  if (type === 'video_note') return 'Sent a video';
+  if (type === 'video' || type === 'video_note') return 'Sent a video';
   return 'Sent a file';
 }

@@ -1,13 +1,28 @@
 import { Transform, Type } from 'class-transformer';
-import { IsIn, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsMongoId,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
-import { SENDABLE_TYPES } from './messages.constants';
+import { coerceLinks, SENDABLE_TYPES } from './messages.constants';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
 export class SendMessageDto {
+  @IsOptional()
   @IsIn(SENDABLE_TYPES, { message: 'Pick a valid message type' })
-  type!: (typeof SENDABLE_TYPES)[number];
+  type: (typeof SENDABLE_TYPES)[number] = 'text';
 
   @IsOptional()
   @IsString()
@@ -30,6 +45,13 @@ export class SendMessageDto {
   @IsOptional()
   @IsMongoId({ message: 'Reply to a valid message' })
   replyTo?: string;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => coerceLinks(value))
+  @IsArray()
+  @ArrayMaxSize(10, { message: 'You can attach up to 10 links' })
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] }, { each: true, message: 'Use a valid http or https link' })
+  links?: string[];
 }
 
 export class ListMessagesDto {

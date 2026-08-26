@@ -7,16 +7,16 @@ import {
   Param,
   Post,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import type { AuthViewer } from '../users/users.constants';
-import { FILE_MAX, type UploadedChatFile } from './messages.constants';
+import { collectUploads, FILE_MAX, FILES_MAX, type UploadedChatFile } from './messages.constants';
 import { DeleteMessageDto, ListMessagesDto, ReactDto, SendMessageDto } from './messages.dto';
 import { MessagesService } from './messages.service';
 
@@ -36,14 +36,22 @@ export class MessagesController {
 
   @Post('conversations/:conversationId/messages')
   @HttpCode(201)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FILE_MAX } }))
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'file', maxCount: 1 },
+        { name: 'files', maxCount: FILES_MAX },
+      ],
+      { limits: { fileSize: FILE_MAX, files: FILES_MAX } },
+    ),
+  )
   send(
     @CurrentUser() viewer: AuthViewer,
     @Param('conversationId') conversationId: string,
     @Body() dto: SendMessageDto,
-    @UploadedFile() file?: UploadedChatFile,
+    @UploadedFiles() uploaded?: { file?: UploadedChatFile[]; files?: UploadedChatFile[] },
   ) {
-    return this.messages.send(viewer, conversationId, dto, file);
+    return this.messages.send(viewer, conversationId, dto, collectUploads(uploaded));
   }
 
   @Post('conversations/:conversationId/delivered')
