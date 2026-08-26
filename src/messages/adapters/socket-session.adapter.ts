@@ -10,7 +10,7 @@ import { UsersService } from '../../users/users.service';
 export class SocketSessionAdapter extends IoAdapter {
   constructor(
     private readonly nestApp: NestExpressApplication,
-    private readonly frontendUrl: string,
+    private readonly frontendOrigins: string | string[],
   ) {
     super(nestApp.getHttpServer());
   }
@@ -22,7 +22,12 @@ export class SocketSessionAdapter extends IoAdapter {
     const server = super.createIOServer(port, {
       ...options,
       path: '/socket.io',
-      cors: { origin: this.frontendUrl, credentials: true, methods: ['GET', 'POST'], allowedHeaders: ['Content-Type', 'Authorization'] },
+      cors: {
+        origin: this.frontendOrigins,
+        credentials: true,
+        methods: ['GET', 'POST'],
+        allowedHeaders: ['Content-Type', 'Authorization'],
+      },
     }) as Server;
 
     server.use((socket, next) => {

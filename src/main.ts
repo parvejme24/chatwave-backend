@@ -10,6 +10,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { AppEnv } from './config/env.validation';
+import { frontendOrigins } from './config/cors.origins';
 import { SocketSessionAdapter } from './messages/adapters/socket-session.adapter';
 
 setDefaultResultOrder('ipv4first');
@@ -19,6 +20,7 @@ async function bootstrap() {
   const config = app.get(ConfigService<AppEnv, true>);
   const port = config.get('PORT', { infer: true });
   const frontendUrl = config.get('FRONTEND_URL', { infer: true });
+  const origins = frontendOrigins(frontendUrl);
 
   app.enableShutdownHooks();
   app.set('trust proxy', 1);
@@ -26,7 +28,7 @@ async function bootstrap() {
   app.use(cookieParser());
   app.setGlobalPrefix('api', { exclude: ['/'] });
   app.enableCors({
-    origin: frontendUrl,
+    origin: origins,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -40,7 +42,7 @@ async function bootstrap() {
     }),
   );
   app.useGlobalFilters(new HttpExceptionFilter());
-  app.useWebSocketAdapter(new SocketSessionAdapter(app, frontendUrl));
+  app.useWebSocketAdapter(new SocketSessionAdapter(app, origins));
 
   await app.listen(port, '0.0.0.0');
   console.log(`Server is running at http://0.0.0.0:${port}`);

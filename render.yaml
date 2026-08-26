@@ -21,6 +21,6 @@ services:
       - key: SESSION_SECRET
         generateValue: true
       - key: FRONTEND_URL
-        sync: false
+        value: https://chatwave-pvj.vercel.app
       - key: API_URL
         sync: false

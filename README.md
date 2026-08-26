@@ -10,8 +10,9 @@
 [![Node](https://img.shields.io/badge/Node-22-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 
 Live API: [chatwave-backend-z7n1.onrender.com](https://chatwave-backend-z7n1.onrender.com)  
+Live app: [chatwave-pvj.vercel.app](https://chatwave-pvj.vercel.app) · [chatwave-frontend-alpha.vercel.app](https://chatwave-frontend-alpha.vercel.app)  
 Health: `GET /` → `{ "message": "Welcome to Chatwave API", "status": "running" }`  
-Frontend talks to this service over REST (`/api`) and Socket.IO (`/socket.io`).
+Frontend talks to this service over REST (`/api`) and Socket.IO (`/socket.io`). CORS allows both Vercel origins (no trailing slash, no `/sign-in` path).
 
 ---
 
@@ -347,7 +348,7 @@ Do **not** start with `nest start` on a small instance (it recompiles and OOMs).
 | Health | `/` |
 | Node | 22 |
 
-Set `NODE_ENV=production`, `FRONTEND_URL`, `API_URL`, `MONGODB_URI`, `REDIS_URL` (`REDIS_TLS` if needed), secrets. Atlas network: `0.0.0.0/0` or Render egress IPs. Nest binds a port only after Mongo connects.
+Set `NODE_ENV=production`, `FRONTEND_URL=https://chatwave-pvj.vercel.app` (no trailing slash; CORS also allows `https://chatwave-frontend-alpha.vercel.app`), `API_URL`, `MONGODB_URI`, `REDIS_URL` (`REDIS_TLS` if needed), secrets. Atlas network: `0.0.0.0/0` or Render egress IPs. Nest binds a port only after Mongo connects.
 
 OAuth callbacks: `{API_URL}/api/auth/google/callback` and `{API_URL}/api/auth/github/callback`.
 
@@ -358,7 +359,8 @@ OAuth callbacks: `{API_URL}/api/auth/google/callback` and `{API_URL}/api/auth/gi
 **Md Parvej** — full-stack developer. ChatWave is a portfolio project: production-shaped chat backend (auth, realtime, media, calls, moderation).
 
 - GitHub: [parvejme24/chatwave-backend](https://github.com/parvejme24/chatwave-backend)
-- Live: [chatwave-backend-z7n1.onrender.com](https://chatwave-backend-z7n1.onrender.com)
+- Live API: [chatwave-backend-z7n1.onrender.com](https://chatwave-backend-z7n1.onrender.com)
+- Live app: [chatwave-pvj.vercel.app](https://chatwave-pvj.vercel.app) · [chatwave-frontend-alpha.vercel.app](https://chatwave-frontend-alpha.vercel.app)
 
 ---
 
