@@ -50,7 +50,18 @@ export class SendMessageDto {
   @Transform(({ value }: { value: unknown }) => coerceLinks(value))
   @IsArray()
   @ArrayMaxSize(10, { message: 'You can attach up to 10 links' })
-  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] }, { each: true, message: 'Use a valid http or https link' })
+  @IsUrl(
+    {
+      require_protocol: true,
+      protocols: ['http', 'https'],
+      require_valid_protocol: true,
+      allow_underscores: true,
+      allow_fragments: true,
+      allow_query_components: true,
+      allow_trailing_dot: false,
+    },
+    { each: true, message: 'Use a valid http or https link' },
+  )
   links?: string[];
 }
 
