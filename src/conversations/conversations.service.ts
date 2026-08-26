@@ -7,11 +7,22 @@ import {
   Optional,
   forwardRef,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
 
 import { BlocksService } from '../blocks/blocks.service';
-import { initialsFromName, type AuthViewer, type PublicUser } from '../users/users.constants';
+import { CHAT_REALTIME } from '../blocks/blocks.constants';
+import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
+import { Message, MessageDocument } from '../messages/message.schema';
+import {
+  initialsFromName,
+  PHOTO_MAX,
+  PHOTO_MIME,
+  type AuthViewer,
+  type PublicUser,
+  type UploadedPhoto,
+} from '../users/users.constants';
 import { UserDocument } from '../users/user.schema';
 import { UsersService } from '../users/users.service';
 import {
@@ -28,11 +39,18 @@ import {
 import { UpdateConversationDto, UpdateMembershipDto } from './conversations.dto';
 import { Conversation, ConversationDocument, ConversationMember } from './conversation.schema';
 
+type ChatRealtime = {
+  emitConversationRemoved(userId: string, conversationId: string): void;
+};
+
 @Injectable()
 export class ConversationsService {
   constructor(
     @InjectModel(Conversation.name) private readonly conversations: Model<ConversationDocument>,
+    @InjectModel(Message.name) private readonly messages: Model<MessageDocument>,
     private readonly users: UsersService,
+    private readonly moduleRef: ModuleRef,
+    private readonly cloudinary: CloudinaryService,
     @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
@@ -54,7 +72,8 @@ export class ConversationsService {
       if (filter === 'archived' ? !mine.archived : mine.archived) continue;
       if (filter === 'unread' && mine.unreadCount <= 0) continue;
       if (filter === 'groups' && row.type !== 'group') continue;
-      if (row.type === 'direct' && skip) {
+      // Keep blocked people out of the main list, but still show them under Archived.
+      if (row.type === 'direct' && skip && filter !== 'archived') {
         const other = row.members.find((m) => !m.leftAt && String(m.user) !== viewer.id);
         if (other && skip.has(String(other.user))) continue;
       }
@@ -122,6 +141,54 @@ export class ConversationsService {
     return { ok: true as const, peerId };
   }
 
+  /** Move a direct chat to Archived for the blocker after a block. */
+  async archiveDirectBetween(blockerId: string, blockedId: string) {
+    if (!isMongoId(blockerId) || !isMongoId(blockedId)) return;
+    const row = await this.conversations.findOne({ type: 'direct', pairKey: pairKey(blockerId, blockedId) }).exec();
+    if (!row) return;
+    const mine = activeMember(row, blockerId);
+    if (!mine) return;
+    mine.archived = true;
+    await row.save();
+  }
+
+  /**
+   * Direct chats: permanently delete the conversation and all messages for everyone.
+   * Groups: hide only for the viewer (leave), same as before.
+   */
+  async deleteConversation(viewer: AuthViewer, id: string) {
+    const { row } = await this.requireMine(viewer.id, id);
+    if (row.type !== 'direct') {
+      return this.hideForViewer(viewer, id);
+    }
+
+    const conversationId = String(row._id);
+    const memberIds = row.members.map((member) => String(member.user));
+    const peerId = memberIds.find((userId) => userId !== viewer.id);
+
+    await this.messages.deleteMany({ conversation: row._id }).exec();
+    await this.conversations.deleteOne({ _id: row._id }).exec();
+
+    const realtime = this.pickRealtime();
+    for (const userId of memberIds) {
+      try {
+        realtime?.emitConversationRemoved(userId, conversationId);
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    return { ok: true as const, peerId };
+  }
+
+  private pickRealtime() {
+    try {
+      return this.moduleRef.get<ChatRealtime>(CHAT_REALTIME, { strict: false });
+    } catch {
+      return undefined;
+    }
+  }
+
   async createDirect(viewer: AuthViewer, otherId: string) {
     if (otherId === viewer.id) throw new BadRequestException({ error: 'You cannot start a chat with yourself' });
     await this.blocks?.assertNotBlocked(viewer.id, otherId);
@@ -182,16 +249,74 @@ export class ConversationsService {
   async updateGroup(viewer: AuthViewer, id: string, dto: UpdateConversationDto) {
     const row = await this.requireMember(viewer.id, id);
     if (row.type !== 'group') throw new BadRequestException({ error: 'You can only rename a group' });
-    if (activeMember(row, viewer.id)?.role !== 'admin') {
-      throw new ForbiddenException({ error: 'Only a group admin can rename this chat' });
-    }
+    // Any active member can update group name / tone / photo.
     if (dto.name) {
       row.name = dto.name;
       row.initials = initialsFromName(dto.name);
     }
     if (dto.tone) row.tone = dto.tone;
     await row.save();
+    this.notifyGroupUpdated(row.id);
     return { conversation: await this.toDetail(viewer, row) };
+  }
+
+  async updateGroupPhoto(viewer: AuthViewer, id: string, file: UploadedPhoto) {
+    const row = await this.requireMember(viewer.id, id);
+    if (row.type !== 'group') throw new BadRequestException({ error: 'You can only update a group photo' });
+    if (!file.buffer?.length) throw new BadRequestException({ error: 'Choose a photo to upload' });
+    if (!PHOTO_MIME.includes(file.mimetype as (typeof PHOTO_MIME)[number])) {
+      throw new BadRequestException({ error: 'Use a JPEG, PNG, or WebP image' });
+    }
+    if (file.size > PHOTO_MAX) throw new BadRequestException({ error: 'Keep the photo under 2 MB' });
+
+    const uploaded = await this.cloudinary.uploadAvatar(file.buffer);
+    const previous = row.photoPublicId;
+    row.photo = uploaded.url;
+    row.photoPublicId = uploaded.publicId;
+    await row.save();
+    if (previous) {
+      try {
+        await this.cloudinary.deleteAsset(previous);
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+    this.notifyGroupUpdated(row.id);
+    return { conversation: await this.toDetail(viewer, row) };
+  }
+
+  async deleteGroupPhoto(viewer: AuthViewer, id: string) {
+    const row = await this.requireMember(viewer.id, id);
+    if (row.type !== 'group') throw new BadRequestException({ error: 'You can only update a group photo' });
+    if (row.photoPublicId) {
+      try {
+        await this.cloudinary.deleteAsset(row.photoPublicId);
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+    row.photo = null;
+    row.photoPublicId = null;
+    await row.save();
+    this.notifyGroupUpdated(row.id);
+    return { conversation: await this.toDetail(viewer, row) };
+  }
+
+  private notifyGroupUpdated(conversationId: string) {
+    try {
+      const realtime = this.moduleRef.get<{ emitGroupUpdated?(id: string, payload: unknown): void }>(
+        CHAT_REALTIME,
+        { strict: false },
+      );
+      realtime?.emitGroupUpdated?.(conversationId, {
+        conversationId,
+        members: [],
+        status: '',
+        sub: '',
+      });
+    } catch {
+      /* best-effort */
+    }
   }
 
   async updateMembership(viewer: AuthViewer, id: string, dto: UpdateMembershipDto) {

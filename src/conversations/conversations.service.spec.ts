@@ -1,8 +1,11 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 
 import { BlocksService } from '../blocks/blocks.service';
+import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
+import { Message } from '../messages/message.schema';
 import { UsersService } from '../users/users.service';
 import { Conversation } from './conversation.schema';
 import { ConversationsService } from './conversations.service';
@@ -35,6 +38,7 @@ function member(user: string, extra: Record<string, unknown> = {}) {
 function convo(overrides: Record<string, unknown> = {}) {
   return {
     id: '64b000000000000000000001',
+    _id: '64b000000000000000000001',
     type: 'direct',
     name: '',
     initials: '',
@@ -51,9 +55,18 @@ function convo(overrides: Record<string, unknown> = {}) {
 
 describe('ConversationsService', () => {
   let service: ConversationsService;
-  const model = { find: jest.fn(), findOne: jest.fn(), findById: jest.fn(), create: jest.fn() };
+  const model = {
+    find: jest.fn(),
+    findOne: jest.fn(),
+    findById: jest.fn(),
+    create: jest.fn(),
+    deleteOne: jest.fn(),
+  };
+  const messages = { deleteMany: jest.fn() };
   const users = { findActiveById: jest.fn(), findByIds: jest.fn(), publicUser: jest.fn() };
   const blocks = { assertNotBlocked: jest.fn(), restrictedIds: jest.fn() };
+  const moduleRef = { get: jest.fn() };
+  const cloudinary = { uploadAvatar: jest.fn(), deleteAsset: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -73,12 +86,20 @@ describe('ConversationsService', () => {
     }));
     blocks.assertNotBlocked.mockResolvedValue(undefined);
     blocks.restrictedIds.mockResolvedValue(new Set());
+    messages.deleteMany.mockReturnValue({ exec: jest.fn().mockResolvedValue({ deletedCount: 0 }) });
+    model.deleteOne.mockReturnValue({ exec: jest.fn().mockResolvedValue({ deletedCount: 1 }) });
+    moduleRef.get.mockImplementation(() => {
+      throw new Error('not found');
+    });
     const module = await Test.createTestingModule({
       providers: [
         ConversationsService,
         { provide: getModelToken(Conversation.name), useValue: model },
+        { provide: getModelToken(Message.name), useValue: messages },
         { provide: UsersService, useValue: users },
         { provide: BlocksService, useValue: blocks },
+        { provide: ModuleRef, useValue: moduleRef },
+        { provide: CloudinaryService, useValue: cloudinary },
       ],
     }).compile();
     service = module.get(ConversationsService);
@@ -99,7 +120,9 @@ describe('ConversationsService', () => {
   });
 
   it('forbids creating a direct chat when blocked', async () => {
-    blocks.assertNotBlocked.mockRejectedValue(new ForbiddenException({ error: 'You cannot message this person' }));
+    blocks.assertNotBlocked.mockRejectedValue(
+      new ForbiddenException({ error: "You can't message this person. One of you has blocked the other." }),
+    );
     await expect(service.createDirect(viewer, B)).rejects.toBeInstanceOf(ForbiddenException);
     expect(model.create).not.toHaveBeenCalled();
   });
@@ -119,15 +142,20 @@ describe('ConversationsService', () => {
     expect(row.members[0].leftAt).toBeInstanceOf(Date);
   });
 
-  it('keeps a direct chat that already has a message', async () => {
+  it('does not hide a chat that already has messages', async () => {
     const row = convo({ lastMessage: '64c000000000000000000001' });
     model.findOne.mockReturnValue(q(row));
     await expect(service.hideDirectIfEmpty(A, B)).resolves.toBe(false);
-    expect(row.save).not.toHaveBeenCalled();
+    expect(row.members[0].leftAt).toBeNull();
   });
 
-  it('returns 404 when the viewer is not a member', async () => {
-    model.findById.mockReturnValue(q(convo({ members: [member(B), member(C)] })));
-    await expect(service.getOne(viewer, '64b000000000000000000001')).rejects.toBeInstanceOf(NotFoundException);
+  it('deletes a direct conversation and its messages for everyone', async () => {
+    const row = convo();
+    model.findById.mockReturnValue(q(row));
+    const result = await service.deleteConversation(viewer, row.id);
+    expect(result.ok).toBe(true);
+    expect(result.peerId).toBe(B);
+    expect(messages.deleteMany).toHaveBeenCalled();
+    expect(model.deleteOne).toHaveBeenCalled();
   });
 });

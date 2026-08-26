@@ -182,7 +182,7 @@ describe('ContactsService', () => {
     ]);
     conversations.directIdsFor.mockResolvedValue(new Map([[B, CONV]]));
     const result = await service.list(viewer);
-    expect(users.findDiscoverable).toHaveBeenCalledWith(viewer, { q: undefined, presence: undefined, limit: 50 });
+    expect(users.findDiscoverable).toHaveBeenCalledWith(viewer, { q: undefined, presence: undefined, limit: 200 });
     expect(result.contacts.map((item) => item.id)).toEqual([B, C]);
     expect(result.contacts[0].following).toBe(true);
     expect(result.contacts[0].hrefChat).toBe(`/chats/${CONV}`);

@@ -41,7 +41,7 @@ export class ContactsService {
     @Optional() @Inject(forwardRef(() => BlocksService)) private readonly blocks?: BlocksService,
   ) {}
 
-  async list(viewer: AuthViewer, q?: string, presence?: Presence, limit = 50) {
+  async list(viewer: AuthViewer, q?: string, presence?: Presence, limit = 200) {
     const following = await this.followedIds(viewer.id);
     const people = await this.users.findDiscoverable(viewer, { q, presence, limit });
     const directs = await this.conversations.directIdsFor(

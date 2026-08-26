@@ -8,18 +8,17 @@ import { UsersModule } from '../users/users.module';
 import { ContactsController } from './contacts.controller';
 import { ContactsService } from './contacts.service';
 import { Contact, ContactSchema } from './contact.schema';
-import { UsersDirectoryController } from './users-directory.controller';
 import { CONTACTS_ACTIONS } from '../blocks/blocks.constants';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Contact.name, schema: ContactSchema }]),
-    UsersModule,
+    forwardRef(() => UsersModule),
     forwardRef(() => ConversationsModule),
     forwardRef(() => BlocksModule),
     forwardRef(() => AuthModule),
   ],
-  controllers: [ContactsController, UsersDirectoryController],
+  controllers: [ContactsController],
   providers: [ContactsService, { provide: CONTACTS_ACTIONS, useExisting: ContactsService }],
   exports: [ContactsService, CONTACTS_ACTIONS],
 })

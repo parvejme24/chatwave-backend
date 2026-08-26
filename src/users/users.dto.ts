@@ -75,3 +75,22 @@ export class SearchUsersDto {
   @Max(50)
   limit = 20;
 }
+
+/** GET /api/users — discoverable directory (not search). */
+export class ListUsersDirectoryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  q?: string;
+
+  @IsOptional()
+  @IsIn(PRESENCE)
+  presence?: (typeof PRESENCE)[number];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  limit = 200;
+}

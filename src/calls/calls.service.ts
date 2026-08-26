@@ -93,6 +93,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     await this.expireRings();
     await this.clearStaleBusy(memberIds);
+    // Stuck ringing/active rows (e.g. failed hang-up) still mark members busy.
+    // Close this viewer's leftovers before rejecting the new call.
+    if (await this.busy(memberIds)) {
+      await this.hangupAllForUser(viewer.id);
+      await this.clearStaleBusy(memberIds);
+    }
     if (await this.busy(memberIds)) throw new ConflictException({ error: 'Already in a call' });
     const now = new Date();
     const row = await this.calls.create({

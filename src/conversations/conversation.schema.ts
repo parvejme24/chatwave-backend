@@ -57,6 +57,9 @@ export class Conversation {
   @Prop({ type: String, default: null })
   photo: string | null;
 
+  @Prop({ type: String, default: null })
+  photoPublicId: string | null;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy: Types.ObjectId;
 

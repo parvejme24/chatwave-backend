@@ -1,7 +1,9 @@
-import { ContactsService } from './contacts.service';
-import { UsersDirectoryController } from './users-directory.controller';
+import { ModuleRef } from '@nestjs/core';
 
-describe('UsersDirectoryController', () => {
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
+
+describe('UsersController directory', () => {
   it('lists every user with a following flag for follow/unfollow', async () => {
     const contacts = {
       list: jest.fn().mockResolvedValue({
@@ -10,7 +12,11 @@ describe('UsersDirectoryController', () => {
         onlineCount: 0,
       }),
     };
-    const controller = new UsersDirectoryController(contacts as unknown as ContactsService);
+    const moduleRef = { get: jest.fn().mockReturnValue(contacts) };
+    const controller = new UsersController(
+      {} as UsersService,
+      moduleRef as unknown as ModuleRef,
+    );
     const viewer = { id: 'u1', isOwner: false };
     await expect(controller.list(viewer, { limit: 200 })).resolves.toEqual({
       users: [{ id: 'u2', name: 'Nadia', following: false }],

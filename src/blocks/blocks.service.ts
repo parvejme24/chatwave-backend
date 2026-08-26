@@ -10,6 +10,7 @@ import {
   CANNOT_BLOCK_SELF,
   CHAT_REALTIME,
   CONTACTS_ACTIONS,
+  CONVERSATIONS_ACTIONS,
   MESSAGE_BLOCKED,
   PICK_SOMEONE,
   USER_NOT_FOUND,
@@ -19,6 +20,10 @@ import { CreateBlockDto } from './blocks.dto';
 
 type ContactsActions = {
   remove(viewer: AuthViewer, personId: string): Promise<unknown>;
+};
+
+type ConversationsActions = {
+  archiveDirectBetween(blockerId: string, blockedId: string): Promise<void>;
 };
 
 type ChatRealtime = {
@@ -126,10 +131,16 @@ export class BlocksService {
   private async afterBlock(blockerId: string, blockedId: string) {
     const viewer = (id: string) => ({ id, isOwner: false });
     const contacts = this.pick<ContactsActions>(CONTACTS_ACTIONS);
+    const conversations = this.pick<ConversationsActions>(CONVERSATIONS_ACTIONS);
     const realtime = this.pick<ChatRealtime>(CHAT_REALTIME);
     try {
       await contacts?.remove(viewer(blockerId), blockedId);
       await contacts?.remove(viewer(blockedId), blockerId);
+    } catch {
+      /* best-effort */
+    }
+    try {
+      await conversations?.archiveDirectBetween(blockerId, blockedId);
     } catch {
       /* best-effort */
     }

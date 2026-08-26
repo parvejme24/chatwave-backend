@@ -11,18 +11,36 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
-import { SearchUsersDto, UpdatePresenceDto, UpdateProfileDto } from './users.dto';
+import { ContactsService } from '../contacts/contacts.service';
+import {
+  ListUsersDirectoryDto,
+  SearchUsersDto,
+  UpdatePresenceDto,
+  UpdateProfileDto,
+} from './users.dto';
 import { PHOTO_MAX, type AuthViewer, type UploadedPhoto } from './users.constants';
 import { UsersService } from './users.service';
 
 @Controller('users')
 @UseGuards(SessionGuard)
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly moduleRef: ModuleRef,
+  ) {}
+
+  /** Discoverable people directory — same data as GET /api/contacts. */
+  @Get()
+  async list(@CurrentUser() viewer: AuthViewer, @Query() query: ListUsersDirectoryDto) {
+    const contacts = this.moduleRef.get(ContactsService, { strict: false });
+    const result = await contacts.list(viewer, query.q, query.presence, query.limit);
+    return { users: result.contacts, total: result.total, onlineCount: result.onlineCount };
+  }
 
   @Get('me')
   me(@CurrentUser() viewer: AuthViewer) {

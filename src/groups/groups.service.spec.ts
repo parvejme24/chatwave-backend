@@ -1,10 +1,13 @@
 import { BadRequestException, ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 
+import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { Conversation } from '../conversations/conversation.schema';
 import { ConversationsService } from '../conversations/conversations.service';
 import { ChatGateway } from '../messages/messages.gateway';
+import { Message } from '../messages/message.schema';
 import { MessagesService } from '../messages/messages.service';
 import { UsersService } from '../users/users.service';
 import { ADMIN_REMOVE_ERROR, LAST_ADMIN_ERROR, LEAVE_INSTEAD } from './groups.constants';
@@ -107,9 +110,12 @@ describe('GroupsService', () => {
         GroupsService,
         ConversationsService,
         { provide: getModelToken(Conversation.name), useValue: model },
+        { provide: getModelToken(Message.name), useValue: { deleteMany: jest.fn() } },
         { provide: UsersService, useValue: users },
         { provide: MessagesService, useValue: messages },
         { provide: ChatGateway, useValue: realtime },
+        { provide: ModuleRef, useValue: { get: jest.fn() } },
+        { provide: CloudinaryService, useValue: { uploadAvatar: jest.fn(), deleteAsset: jest.fn() } },
       ],
     }).compile();
     service = module.get(GroupsService);

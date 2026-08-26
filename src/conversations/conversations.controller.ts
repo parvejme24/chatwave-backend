@@ -1,24 +1,28 @@
 import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    HttpCode,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Res,
-    UseGuards,
-    Inject,
-    forwardRef,
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { ContactsService } from '../contacts/contacts.service';
-import type { AuthViewer } from '../users/users.constants';
+import { PHOTO_MAX, type AuthViewer, type UploadedPhoto } from '../users/users.constants';
 import {
   CreateDirectDto,
   CreateGroupDto,
@@ -67,6 +71,22 @@ export class ConversationsController {
     return this.conversations.updateGroup(viewer, id, dto);
   }
 
+  @Patch(':id/photo')
+  @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: PHOTO_MAX } }))
+  updatePhoto(
+    @CurrentUser() viewer: AuthViewer,
+    @Param('id') id: string,
+    @UploadedFile() file?: UploadedPhoto,
+  ) {
+    if (!file) throw new BadRequestException({ error: 'Choose a photo to upload' });
+    return this.conversations.updateGroupPhoto(viewer, id, file);
+  }
+
+  @Delete(':id/photo')
+  deletePhoto(@CurrentUser() viewer: AuthViewer, @Param('id') id: string) {
+    return this.conversations.deleteGroupPhoto(viewer, id);
+  }
+
   @Patch(':id/membership')
   membership(@CurrentUser() viewer: AuthViewer, @Param('id') id: string, @Body() dto: UpdateMembershipDto) {
     return this.conversations.updateMembership(viewer, id, dto);
@@ -81,7 +101,7 @@ export class ConversationsController {
   @Delete(':id')
   @HttpCode(200)
   async remove(@CurrentUser() viewer: AuthViewer, @Param('id') id: string) {
-    const { peerId } = await this.conversations.hideForViewer(viewer, id);
+    const { peerId } = await this.conversations.deleteConversation(viewer, id);
     if (peerId) await this.contacts.remove(viewer, peerId, { keepChat: true });
     return { ok: true as const };
   }
