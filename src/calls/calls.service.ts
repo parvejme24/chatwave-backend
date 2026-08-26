@@ -48,6 +48,7 @@ import { CallsRealtime } from './calls.realtime';
 @Injectable()
 export class CallsService implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private hangupTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(
     @InjectModel(Call.name) private readonly calls: Model<CallDocument>,
@@ -67,6 +68,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+    for (const timer of this.hangupTimers) clearTimeout(timer);
+    this.hangupTimers.clear();
   }
 
   iceServers(): IceServer[] {
@@ -88,6 +91,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (people.length !== callees.length || people.some((u) => u.status !== 'active' || u.deletedAt)) {
       throw new BadRequestException({ error: 'Someone in this chat is not available' });
     }
+    await this.expireRings();
+    await this.clearStaleBusy(memberIds);
     if (await this.busy(memberIds)) throw new ConflictException({ error: 'Already in a call' });
     const now = new Date();
     const row = await this.calls.create({
@@ -158,9 +163,40 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
 
   async end(viewer: AuthViewer, id: string, ice?: 'p2p' | 'turn') {
     const row = await this.requireParticipant(id, viewer.id);
-    if (row.status !== 'ringing' && row.status !== 'active') throw new BadRequestException({ error: 'That call has already ended' });
-    await this.conclude(row, { status: row.status === 'active' ? 'ended' : 'missed', endedBy: viewer.id, ice });
+    if (row.status !== 'ringing' && row.status !== 'active') {
+      this.notifyEnded(row);
+      return { call: await this.toDto(viewer, row) };
+    }
+    await this.conclude(row, {
+      status: this.finishStatus(row, viewer.id),
+      endedBy: viewer.id,
+      ice,
+    });
     return { call: await this.toDto(viewer, row) };
+  }
+
+  async hangupAllForUser(userId: string) {
+    if (!isMongoId(userId)) return;
+    const rows = await this.calls
+      .find({
+        status: { $in: ['ringing', 'active'] },
+        'participants.user': oid(userId),
+      })
+      .exec();
+    for (const row of rows) {
+      await this.conclude(row, { status: this.finishStatus(row, userId), endedBy: userId });
+    }
+  }
+
+  hangupIfDisconnected(userId: string) {
+    const timer = setTimeout(() => {
+      this.hangupTimers.delete(timer);
+      void this.redis.socketCount(userId).then((count) => {
+        if (count > 0) return;
+        return this.hangupAllForUser(userId);
+      });
+    }, 2500);
+    this.hangupTimers.add(timer);
   }
 
   async getOne(viewer: AuthViewer, id: string) {
@@ -220,14 +256,45 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async busy(userIds: string[]) {
-    return Boolean(
-      await this.calls
-        .findOne({
-          status: { $in: ['ringing', 'active'] },
-          participants: { $elemMatch: { user: { $in: userIds.map(oid) }, leftAt: null } },
-        })
-        .exec(),
-    );
+    const live = await this.calls
+      .findOne({
+        status: { $in: ['ringing', 'active'] },
+        participants: { $elemMatch: { user: { $in: userIds.map(oid) }, leftAt: null } },
+      })
+      .exec();
+    if (live) return true;
+    for (const id of userIds) {
+      const callId = await this.redis.getCallBusy(id);
+      if (!callId) continue;
+      const row = isMongoId(callId) ? await this.calls.findById(callId).exec() : null;
+      if (row && (row.status === 'ringing' || row.status === 'active')) return true;
+      await this.redis.clearCallBusy(id);
+    }
+    return false;
+  }
+
+  private async clearStaleBusy(userIds: string[]) {
+    for (const id of userIds) {
+      const callId = await this.redis.getCallBusy(id);
+      if (!callId) continue;
+      const row = isMongoId(callId) ? await this.calls.findById(callId).exec() : null;
+      if (!row || (row.status !== 'ringing' && row.status !== 'active')) await this.redis.clearCallBusy(id);
+    }
+  }
+
+  private finishStatus(row: CallDocument, endedBy: string): 'ended' | 'missed' | 'declined' {
+    if (row.status === 'active') return 'ended';
+    return String(row.initiatedBy) === endedBy ? 'missed' : 'declined';
+  }
+
+  private notifyEnded(row: CallDocument) {
+    this.realtime.emitEnded(String(row.conversation), ids(row), {
+      callId: row.id,
+      conversationId: String(row.conversation),
+      status: row.status,
+      durationSec: row.durationSec ?? 0,
+      endedBy: row.endedBy ? String(row.endedBy) : null,
+    });
   }
 
   private async requireCallee(id: string, userId: string) {
@@ -242,7 +309,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     row: CallDocument,
     input: { status: 'ended' | 'missed' | 'declined'; endedBy: string | null; ice?: 'p2p' | 'turn' },
   ) {
-    if (row.status !== 'ringing' && row.status !== 'active' && row.status !== 'declined') return;
+    if (row.status !== 'ringing' && row.status !== 'active') return;
     const now = new Date();
     if (row.status === 'active' || input.status === 'ended') {
       row.status = 'ended';
@@ -254,6 +321,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     row.endedAt = now;
     row.endedBy = input.endedBy ? oid(input.endedBy) : null;
     if (input.ice) row.ice = input.ice;
+    for (const participant of row.participants) {
+      if (!participant.leftAt) participant.leftAt = now;
+    }
     await row.save();
     await this.redis.clearCallRing(row.id);
     await Promise.all(ids(row).map((id) => this.redis.clearCallBusy(id)));
@@ -267,11 +337,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       meta: row.durationSec > 0 ? mmss(row.durationSec) : clock(row.startedAt),
       preview,
     });
-    this.realtime.emitEnded(String(row.conversation), ids(row), {
-      callId: row.id,
-      status: row.status,
-      durationSec: row.durationSec,
-    });
+    this.notifyEnded(row);
     if (missed) this.realtime.emitMissed(ids(row), { callId: row.id });
     if (missed) {
       const actorId = String(row.initiatedBy);

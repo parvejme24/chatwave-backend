@@ -2,6 +2,7 @@ import { HttpException } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
+  OnGatewayDisconnect,
   OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
@@ -17,7 +18,7 @@ import { CallsService } from './calls.service';
 type ChatSocket = Socket & { data: { userId?: string; isOwner?: boolean } };
 
 @WebSocketGateway({ namespace: '/', path: '/socket.io' })
-export class CallsGateway implements OnGatewayInit {
+export class CallsGateway implements OnGatewayInit, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -28,6 +29,11 @@ export class CallsGateway implements OnGatewayInit {
 
   afterInit(server: Server) {
     this.live.bind(server);
+  }
+
+  handleDisconnect(socket: ChatSocket) {
+    const userId = socket.data.userId;
+    if (userId) this.calls.hangupIfDisconnected(userId);
   }
 
   @SubscribeMessage('call:join')
@@ -44,9 +50,15 @@ export class CallsGateway implements OnGatewayInit {
   @SubscribeMessage('call:leave')
   async leave(@ConnectedSocket() socket: ChatSocket, @MessageBody() body: unknown) {
     const callId = str(body, 'callId');
-    if (callId) {
+    const userId = socket.data.userId;
+    if (callId && userId) {
       await socket.leave(callRoom(callId));
-      if (socket.data.userId) this.live.emitParticipant(callId, socket.data.userId, 'left');
+      this.live.emitParticipant(callId, userId, 'left');
+      try {
+        await this.calls.end({ id: userId, isOwner: Boolean(socket.data.isOwner) }, callId);
+      } catch {
+        // Call already finished or unknown; the other person still got call:participant.
+      }
     }
     return { ok: true };
   }

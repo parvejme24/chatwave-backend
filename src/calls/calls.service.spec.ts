@@ -64,7 +64,14 @@ describe('CallsService', () => {
   };
   const users = { findByIds: jest.fn(), findById: jest.fn(), publicUser: jest.fn() };
   const messages = { sendCallLog: jest.fn(), updateCallLog: jest.fn() };
-  const redis = { setCallRing: jest.fn(), clearCallRing: jest.fn(), setCallBusy: jest.fn(), clearCallBusy: jest.fn() };
+  const redis = {
+    setCallRing: jest.fn(),
+    clearCallRing: jest.fn(),
+    setCallBusy: jest.fn(),
+    getCallBusy: jest.fn(),
+    clearCallBusy: jest.fn(),
+    socketCount: jest.fn(),
+  };
   const realtime = {
     emitIncoming: jest.fn(),
     emitStarted: jest.fn(),
@@ -84,6 +91,8 @@ describe('CallsService', () => {
     users.publicUser.mockResolvedValue({ id: B, name: 'Nadia Hasan', username: 'nadia', initials: 'NH', tone: 'b', photoUrl: null, presence: 'online' });
     messages.sendCallLog.mockResolvedValue(null);
     messages.updateCallLog.mockResolvedValue(null);
+    redis.getCallBusy.mockResolvedValue(null);
+    redis.socketCount.mockResolvedValue(0);
     model.find.mockReturnValue(q([]));
     model.findOne.mockReturnValue(q(null));
     const module = await Test.createTestingModule({
@@ -139,6 +148,64 @@ describe('CallsService', () => {
     expect(row.status).toBe('missed');
     expect(realtime.emitMissed).toHaveBeenCalled();
     expect(messages.updateCallLog).toHaveBeenCalledWith(CALL, expect.objectContaining({ missed: true }));
+  });
+
+  it('hangup ends the call for everyone and lets a new call start', async () => {
+    const row = callDoc({ status: 'active', answeredAt: new Date('2026-08-25T10:00:05.000Z') });
+    model.findById.mockReturnValue(q(row));
+    await service.end(caller, CALL);
+    expect(row.status).toBe('ended');
+    expect(row.endedBy).toEqual(expect.anything());
+    expect(row.participants.every((p) => p.leftAt)).toBe(true);
+    expect(redis.clearCallBusy).toHaveBeenCalledWith(A);
+    expect(redis.clearCallBusy).toHaveBeenCalledWith(B);
+    expect(realtime.emitEnded).toHaveBeenCalledWith(
+      CONV,
+      [A, B],
+      expect.objectContaining({ callId: CALL, conversationId: CONV, status: 'ended', endedBy: A }),
+    );
+
+    model.find.mockReturnValue(q([]));
+    model.findOne.mockReturnValue(q(null));
+    model.create.mockResolvedValue(callDoc());
+    await expect(service.start(caller, CONV, 'video')).resolves.toEqual(expect.objectContaining({ call: expect.any(Object) }));
+    expect(model.create).toHaveBeenCalled();
+  });
+
+  it('re-emits call:ended when hangup arrives after the call already finished', async () => {
+    const row = callDoc({ status: 'ended', endedBy: A, durationSec: 12 });
+    model.findById.mockReturnValue(q(row));
+    await service.end(callee, CALL);
+    expect(row.save).not.toHaveBeenCalled();
+    expect(realtime.emitEnded).toHaveBeenCalledWith(
+      CONV,
+      [A, B],
+      expect.objectContaining({ callId: CALL, endedBy: A, durationSec: 12 }),
+    );
+  });
+
+  it('hangupAllForUser closes leftover ringing calls', async () => {
+    const row = callDoc();
+    model.find.mockReturnValue(q([row]));
+    await service.hangupAllForUser(A);
+    expect(row.status).toBe('missed');
+    expect(realtime.emitEnded).toHaveBeenCalledWith(
+      CONV,
+      [A, B],
+      expect.objectContaining({ callId: CALL, endedBy: A, status: 'missed' }),
+    );
+    expect(redis.clearCallBusy).toHaveBeenCalledWith(A);
+    expect(redis.clearCallBusy).toHaveBeenCalledWith(B);
+  });
+
+  it('clears a stale Redis busy lock so the next call is not blocked', async () => {
+    redis.getCallBusy.mockResolvedValue(CALL);
+    model.findOne.mockReturnValue(q(null));
+    model.findById.mockReturnValue(q(callDoc({ status: 'ended' })));
+    model.create.mockResolvedValue(callDoc());
+    await expect(service.start(caller, CONV, 'audio')).resolves.toEqual(expect.objectContaining({ call: expect.any(Object) }));
+    expect(redis.clearCallBusy).toHaveBeenCalled();
+    expect(model.create).toHaveBeenCalled();
   });
 
   it('filters history by missed, voice, and video', async () => {

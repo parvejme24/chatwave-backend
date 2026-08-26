@@ -28,7 +28,11 @@ export class CallsRealtime {
     this.fanout(conversationId, userIds, payload.callId, 'call:declined', payload);
   }
 
-  emitEnded(conversationId: string, userIds: string[], payload: { callId: string; status: string; durationSec: number }) {
+  emitEnded(
+    conversationId: string,
+    userIds: string[],
+    payload: { callId: string; status: string; durationSec: number; endedBy: string | null; conversationId: string },
+  ) {
     this.fanout(conversationId, userIds, payload.callId, 'call:ended', payload);
   }
 
