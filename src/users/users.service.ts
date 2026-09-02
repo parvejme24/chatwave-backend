@@ -33,6 +33,10 @@ import {
   type UploadedPhoto,
 } from './users.constants';
 
+const PUBLIC_SELECT =
+  'name username initials tone photoUrl role location settings lastSeenAt presence status deletedAt isOwner';
+const AUTHZ_TTL = 60;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -130,17 +134,13 @@ export class UsersService {
         ? [{ name: rx }, { username: rx }, { email: rx }]
         : [{ name: rx }, { username: rx }];
     }
-    const rows = await this.users.find(filter).limit(take * 3).exec();
-    const skip = await this.blocks?.restrictedIds(viewer.id);
-    const users: PublicUser[] = [];
-    for (const row of rows) {
-      if (isManagedUserHidden(row) || skip?.has(row.id)) continue;
-      const item = await this.publicUser(viewer, row);
-      if (presence && item.presence !== presence) continue;
-      users.push(item);
-      if (users.length >= take) break;
-    }
-    return { users };
+    const [rows, skip] = await Promise.all([
+      this.users.find(filter).select(PUBLIC_SELECT).limit(take).exec(),
+      this.blocks?.restrictedIds(viewer.id) ?? Promise.resolve(undefined),
+    ]);
+    const visible = rows.filter((row) => !isManagedUserHidden(row) && !skip?.has(row.id));
+    const users = (await this.publicUsers(viewer, visible)).filter((item) => !presence || item.presence === presence);
+    return { users: users.slice(0, take) };
   }
 
   async findDiscoverable(
@@ -149,8 +149,10 @@ export class UsersService {
   ) {
     const take = Math.min(Math.max(opts.limit || 50, 1), 500);
     const excluded = new Set([viewer.id, ...[...(opts.excludeIds ?? [])].filter((id) => isMongoId(id))]);
+    const skip = await this.blocks?.restrictedIds(viewer.id);
+    if (skip) for (const id of skip) excluded.add(id);
     const filter: Record<string, unknown> = {
-      _id: { $nin: [...excluded] },
+      _id: { $nin: [...excluded].filter(isMongoId) },
       status: 'active',
       deletedAt: null,
     };
@@ -159,33 +161,32 @@ export class UsersService {
       const rx = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       filter.$or = [{ name: rx }, { username: rx }];
     }
-    const rows = await this.users.find(filter).sort({ name: 1 }).limit(take * 3).exec();
-    const skip = await this.blocks?.restrictedIds(viewer.id);
-    const users: PublicUser[] = [];
-    for (const row of rows) {
-      if (isManagedUserHidden(row) || skip?.has(row.id) || excluded.has(row.id)) continue;
-      const item = await this.publicUser(viewer, row);
-      if (opts.presence && item.presence !== opts.presence) continue;
-      users.push(item);
-      if (users.length >= take) break;
+    if (opts.presence === 'online' || opts.presence === 'away') {
+      const onlineIds = (await this.redis.listOnlineUserIds()).filter((id) => !excluded.has(id) && isMongoId(id));
+      if (!onlineIds.length) return [];
+      filter._id = { $in: onlineIds };
     }
-    return users;
+    const rows = await this.users.find(filter).select(PUBLIC_SELECT).sort({ name: 1 }).limit(take).exec();
+    const users = await this.publicUsers(
+      viewer,
+      rows.filter((row) => !isManagedUserHidden(row) && !excluded.has(row.id)),
+    );
+    return opts.presence ? users.filter((item) => item.presence === opts.presence).slice(0, take) : users;
   }
 
   async listOnline(viewer: AuthViewer) {
-    const ids = (await this.redis.listOnlineUserIds()).filter(
-      (id) => id !== viewer.id && isMongoId(id),
-    );
+    const ids = (await this.redis.listOnlineUserIds()).filter((id) => id !== viewer.id && isMongoId(id));
     if (!ids.length) return { users: [] as PublicUser[] };
-    const rows = await this.users
-      .find({ _id: { $in: ids }, status: 'active', deletedAt: null })
-      .exec();
-    const users = await Promise.all(rows.map((row) => this.publicUser(viewer, row)));
-    const skip = await this.blocks?.restrictedIds(viewer.id);
+    const [rows, skip] = await Promise.all([
+      this.users.find({ _id: { $in: ids }, status: 'active', deletedAt: null }).select(PUBLIC_SELECT).exec(),
+      this.blocks?.restrictedIds(viewer.id) ?? Promise.resolve(undefined),
+    ]);
+    const users = await this.publicUsers(
+      viewer,
+      rows.filter((row) => !isManagedUserHidden(row) && !skip?.has(row.id)),
+    );
     return {
-      users: users.filter(
-        (u) => (u.presence === 'online' || u.presence === 'away') && !skip?.has(u.id),
-      ),
+      users: users.filter((u) => u.presence === 'online' || u.presence === 'away'),
     };
   }
 
@@ -201,13 +202,35 @@ export class UsersService {
     return { user: await this.visiblePublic(viewer, user) };
   }
 
+  async getAuthViewer(userId: string): Promise<AuthViewer | null> {
+    if (!isMongoId(userId)) return null;
+    const cached = await this.redis.cacheGet(`authz:${userId}`);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached) as AuthViewer;
+        if (parsed?.id) return parsed;
+      } catch {
+        /* fall through */
+      }
+    }
+    const user = await this.users.findById(userId).select('status deletedAt isOwner').lean().exec();
+    if (!user || isManagedUserHidden(user)) return null;
+    const viewer = { id: String(user._id), isOwner: Boolean(user.isOwner) };
+    await this.redis.cacheSet(`authz:${userId}`, JSON.stringify(viewer), AUTHZ_TTL);
+    return viewer;
+  }
+
+  forgetAuthViewer(userId: string) {
+    return this.redis.cacheDel(`authz:${userId}`);
+  }
+
   findById(id: string) {
     return this.users.findById(id).exec();
   }
 
   findByIds(ids: string[]) {
     if (ids.length === 0) return Promise.resolve([] as UserDocument[]);
-    return this.users.find({ _id: { $in: ids } }).exec();
+    return this.users.find({ _id: { $in: ids } }).select(PUBLIC_SELECT).exec();
   }
 
   findByUsername(username: string) {
@@ -255,24 +278,29 @@ export class UsersService {
   }
 
   markBanned(userId: string) {
+    void this.forgetAuthViewer(userId);
     return this.users.findByIdAndUpdate(userId, { status: 'banned' }).exec();
   }
 
   softDelete(userId: string) {
+    void this.forgetAuthViewer(userId);
     return this.users.findByIdAndUpdate(userId, { deletedAt: new Date() }).exec();
   }
 
   async closeAccount(userId: string) {
     await this.goOffline(userId);
+    await this.forgetAuthViewer(userId);
     return this.users.findByIdAndUpdate(userId, { deletedAt: new Date(), status: 'banned', presence: 'offline' }).exec();
   }
 
   async banAccount(userId: string) {
     await this.goOffline(userId);
+    await this.forgetAuthViewer(userId);
     return this.users.findByIdAndUpdate(userId, { status: 'banned', presence: 'offline' }, { new: true }).exec();
   }
 
   async unbanAccount(userId: string) {
+    await this.forgetAuthViewer(userId);
     return this.users.findByIdAndUpdate(userId, { status: 'active' }, { new: true }).exec();
   }
 
@@ -281,6 +309,7 @@ export class UsersService {
     if (!user) return null;
     if (user.deletedAt) return user;
     await this.goOffline(userId);
+    await this.forgetAuthViewer(userId);
     user.deletedAt = new Date();
     user.status = 'banned';
     user.presence = 'offline';
@@ -349,8 +378,19 @@ export class UsersService {
     };
   }
 
-  async publicUser(viewer: AuthViewer, user: UserDocument): Promise<PublicUser> {
+  async publicUser(viewer: AuthViewer, user: UserDocument, presence?: Presence): Promise<PublicUser> {
+    return this.toPublic(viewer, user, presence ?? (await this.redis.getLivePresence(user.id)) ?? 'offline');
+  }
+
+  async publicUsers(viewer: AuthViewer, users: UserDocument[]): Promise<PublicUser[]> {
+    if (!users.length) return [];
+    const live = await this.redis.getLivePresenceMany(users.map((user) => user.id));
+    return users.map((user) => this.toPublic(viewer, user, live.get(user.id) ?? 'offline'));
+  }
+
+  private toPublic(viewer: AuthViewer, user: UserDocument, presence: string): PublicUser {
     const hideSeen = viewer.id !== user.id && user.settings?.showLastSeen === false;
+    const live: Presence = presence === 'online' || presence === 'away' ? presence : 'offline';
     return {
       id: user.id,
       name: user.name,
@@ -360,7 +400,7 @@ export class UsersService {
       photoUrl: user.photoUrl ?? null,
       role: user.role ?? '',
       location: user.location ?? '',
-      presence: hideSeen ? 'offline' : ((await this.redis.getLivePresence(user.id)) ?? 'offline'),
+      presence: hideSeen ? 'offline' : live,
       lastSeenAt: hideSeen || !user.lastSeenAt ? null : user.lastSeenAt.toISOString(),
       sub: [user.role, user.location].filter(Boolean).join(' · '),
     };
@@ -410,7 +450,7 @@ export class UsersService {
       username: await this.uniqueUsername(usernameFromEmail(email)),
       initials: initialsFromName(trimmed),
       tone: randomTone(),
-      isOwner: (await this.users.countDocuments().exec()) === 0,
+      isOwner: !(await this.users.exists({})),
       settings: { ...SETTINGS_DEFAULTS, soundFavorites: { ...SETTINGS_DEFAULTS.soundFavorites } },
     };
   }

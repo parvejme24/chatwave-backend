@@ -25,9 +25,9 @@ export class SessionGuard implements CanActivate {
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<Request & AuthedRequest>();
     const { sessionId, userId } = await this.resolve(request);
-    const user = await this.users.findActiveById(userId);
+    const user = await this.users.getAuthViewer(userId);
     if (!user) throw new UnauthorizedException({ error: 'Please sign in again' });
-    request.authUser = { id: user.id, isOwner: Boolean(user.isOwner) };
+    request.authUser = user;
     request.sessionId = sessionId;
     return true;
   }

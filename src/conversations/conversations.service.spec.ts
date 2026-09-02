@@ -16,9 +16,10 @@ const C = '64a000000000000000000003';
 const viewer = { id: A, isOwner: false };
 
 function q<T>(value: T) {
-  const query = { sort: jest.fn(), limit: jest.fn(), exec: jest.fn().mockResolvedValue(value) };
+  const query = { sort: jest.fn(), limit: jest.fn(), select: jest.fn(), exec: jest.fn().mockResolvedValue(value) };
   query.sort.mockReturnValue(query);
   query.limit.mockReturnValue(query);
+  query.select.mockReturnValue(query);
   return query;
 }
 
@@ -63,7 +64,7 @@ describe('ConversationsService', () => {
     deleteOne: jest.fn(),
   };
   const messages = { deleteMany: jest.fn() };
-  const users = { findActiveById: jest.fn(), findByIds: jest.fn(), publicUser: jest.fn() };
+  const users = { findActiveById: jest.fn(), findByIds: jest.fn(), publicUser: jest.fn(), publicUsers: jest.fn() };
   const blocks = { assertNotBlocked: jest.fn(), restrictedIds: jest.fn() };
   const moduleRef = { get: jest.fn() };
   const cloudinary = { uploadAvatar: jest.fn(), deleteAsset: jest.fn() };
@@ -84,6 +85,9 @@ describe('ConversationsService', () => {
       presence: 'online',
       sub: 'Designer · Dhaka',
     }));
+    users.publicUsers.mockImplementation(async (viewer: unknown, docs: Array<{ id: string; name: string; username: string }>) =>
+      Promise.all(docs.map((doc) => users.publicUser(viewer, doc))),
+    );
     blocks.assertNotBlocked.mockResolvedValue(undefined);
     blocks.restrictedIds.mockResolvedValue(new Set());
     messages.deleteMany.mockReturnValue({ exec: jest.fn().mockResolvedValue({ deletedCount: 0 }) });

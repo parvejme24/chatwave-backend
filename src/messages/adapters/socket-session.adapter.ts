@@ -67,7 +67,7 @@ export class SocketSessionAdapter extends IoAdapter {
       if (!session) throw new Error('Please sign in again');
       userId = session.userId;
     }
-    const user = await users.findActiveById(userId);
+    const user = await users.getAuthViewer(userId);
     if (!user) throw new Error('Please sign in again');
     socket.data.userId = user.id;
     socket.data.isOwner = Boolean(user.isOwner);

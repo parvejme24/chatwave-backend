@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
@@ -25,7 +26,16 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.set('trust proxy', 1);
   app.use(helmet());
+  app.use(compression());
   app.use(cookieParser());
+  app.use((req, res, next) => {
+    const started = Date.now();
+    res.on('finish', () => {
+      const ms = Date.now() - started;
+      if (ms >= 400) console.warn(`[slow] ${req.method} ${req.originalUrl} ${ms}ms`);
+    });
+    next();
+  });
   app.setGlobalPrefix('api', { exclude: ['/'] });
   app.enableCors({
     origin: origins,

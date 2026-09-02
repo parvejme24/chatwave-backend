@@ -223,6 +223,31 @@ export class RedisService implements OnModuleDestroy {
     return null;
   }
 
+  async getLivePresenceMany(userIds: string[]): Promise<Map<string, LivePresence>> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    const live = new Map<string, LivePresence>();
+    if (!unique.length) return live;
+    const values = await this.client.mget(...unique.map((id) => presenceKey.live(id)));
+    unique.forEach((id, index) => {
+      const value = values[index];
+      if (value === 'online' || value === 'away') live.set(id, value);
+    });
+    return live;
+  }
+
+  cacheGet(key: string) {
+    return this.client.get(key);
+  }
+
+  cacheSet(key: string, value: string, ttlSec: number) {
+    return this.client.set(key, value, 'EX', ttlSec);
+  }
+
+  cacheDel(...keys: string[]) {
+    if (!keys.length) return Promise.resolve(0);
+    return this.client.del(...keys);
+  }
+
   async claimLastSeenWrite(userId: string, ttl: number): Promise<boolean> {
     const result = await this.client.set(presenceKey.lastSeen(userId), '1', 'EX', ttl, 'NX');
     return result === 'OK';

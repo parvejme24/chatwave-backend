@@ -17,7 +17,7 @@ export type BlockDocument = HydratedDocument<Block>;
 export const BlockSchema = SchemaFactory.createForClass(Block);
 
 BlockSchema.index({ blocker: 1, blocked: 1 }, { unique: true });
-BlockSchema.index({ blocked: 1 });
+BlockSchema.index({ blocked: 1, blocker: 1 });
 BlockSchema.pre('validate', function () {
   if (this.blocker && this.blocked && String(this.blocker) === String(this.blocked)) {
     throw new Error('You cannot block yourself');

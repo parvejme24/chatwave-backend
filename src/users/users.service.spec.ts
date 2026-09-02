@@ -42,7 +42,17 @@ function doc(overrides: Record<string, unknown> = {}) {
 describe('UsersService', () => {
   let service: UsersService;
   const userModel = { find: jest.fn(), findOne: jest.fn(), findById: jest.fn() };
-  const redis = { getLivePresence: jest.fn().mockResolvedValue('online') };
+  const redis = {
+    getLivePresence: jest.fn().mockResolvedValue('online'),
+    getLivePresenceMany: jest.fn(async (ids: string[]) => {
+      const live = new Map<string, string>();
+      for (const id of ids) live.set(id, 'online');
+      return live;
+    }),
+    cacheGet: jest.fn().mockResolvedValue(null),
+    cacheSet: jest.fn(),
+    cacheDel: jest.fn(),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -92,6 +102,7 @@ describe('UsersService', () => {
       expect.objectContaining({ status: 'active', deletedAt: null, _id: { $ne: 'user-1' } }),
     );
     expect(result.users.map((u) => u.id)).toEqual(['user-2']);
+    expect(redis.getLivePresenceMany).toHaveBeenCalledTimes(1);
   });
 
   it('hides lastSeen when showLastSeen is false', async () => {

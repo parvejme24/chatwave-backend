@@ -70,7 +70,7 @@ export class User {
 export type UserDocument = HydratedDocument<User>;
 export const UserSchema = SchemaFactory.createForClass(User);
 
-UserSchema.index({ status: 1, deletedAt: 1 });
+UserSchema.index({ status: 1, deletedAt: 1, name: 1 });
 UserSchema.index({ name: 'text', username: 'text' });
 UserSchema.index({ 'providers.googleId': 1 }, { unique: true, sparse: true });
 UserSchema.index({ 'providers.githubId': 1 }, { unique: true, sparse: true });

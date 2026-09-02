@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 
 import { UsersService } from '../users/users.service';
+import { RedisService } from '../common/redis/redis.service';
 import { Block } from './block.schema';
 import { CANNOT_BLOCK_SELF, CHAT_REALTIME, CONTACTS_ACTIONS, MESSAGE_BLOCKED } from './blocks.constants';
 import { BlocksService } from './blocks.service';
@@ -12,8 +13,10 @@ const B = '64a000000000000000000002';
 const viewer = { id: A, isOwner: false };
 
 function q<T>(value: T) {
-  const query = { sort: jest.fn(), exec: jest.fn().mockResolvedValue(value) };
+  const query = { sort: jest.fn(), select: jest.fn(), lean: jest.fn(), exec: jest.fn().mockResolvedValue(value) };
   query.sort.mockReturnValue(query);
+  query.select.mockReturnValue(query);
+  query.lean.mockReturnValue(query);
   return query;
 }
 
@@ -37,9 +40,10 @@ function body(err: unknown) {
 describe('BlocksService', () => {
   let service: BlocksService;
   const model = { find: jest.fn(), findOne: jest.fn(), create: jest.fn(), deleteOne: jest.fn() };
-  const users = { findById: jest.fn(), findByIds: jest.fn(), findByUsername: jest.fn(), publicUser: jest.fn() };
+  const users = { findById: jest.fn(), findByIds: jest.fn(), findByUsername: jest.fn(), publicUser: jest.fn(), publicUsers: jest.fn() };
   const contacts = { remove: jest.fn().mockResolvedValue({ ok: true }) };
   const realtime = { emitBlocked: jest.fn() };
+  const redis = { cacheGet: jest.fn().mockResolvedValue(null), cacheSet: jest.fn(), cacheDel: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -57,6 +61,7 @@ describe('BlocksService', () => {
         BlocksService,
         { provide: getModelToken(Block.name), useValue: model },
         { provide: UsersService, useValue: users },
+        { provide: RedisService, useValue: redis },
         { provide: CONTACTS_ACTIONS, useValue: contacts },
         { provide: CHAT_REALTIME, useValue: realtime },
       ],

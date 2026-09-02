@@ -83,7 +83,7 @@ describe('GroupsService', () => {
   let service: GroupsService;
   let conversations: ConversationsService;
   const model = { findById: jest.fn() };
-  const users = { findById: jest.fn(), findByIds: jest.fn(), publicUser: jest.fn() };
+  const users = { findById: jest.fn(), findByIds: jest.fn(), publicUser: jest.fn(), publicUsers: jest.fn() };
   const messages = { sendSystem: jest.fn() };
   const realtime = {
     emitGroupUpdated: jest.fn(),
@@ -104,6 +104,9 @@ describe('GroupsService', () => {
       presence: 'online',
       sub: '',
     }));
+    users.publicUsers.mockImplementation(async (viewer: unknown, docs: Array<{ id: string; name: string; username: string }>) =>
+      Promise.all(docs.map((doc) => users.publicUser(viewer, doc))),
+    );
     messages.sendSystem.mockResolvedValue(null);
     const module = await Test.createTestingModule({
       providers: [

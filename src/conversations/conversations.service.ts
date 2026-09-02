@@ -23,7 +23,6 @@ import {
   type PublicUser,
   type UploadedPhoto,
 } from '../users/users.constants';
-import { UserDocument } from '../users/user.schema';
 import { UsersService } from '../users/users.service';
 import {
   MIN_GROUP_MEMBERS,
@@ -57,13 +56,16 @@ export class ConversationsService {
   async list(viewer: AuthViewer, filter: ListFilter = 'all', q?: string, limit = 50) {
     if (filter === 'calls') return { conversations: [] as ConversationListItem[] };
     const take = Math.min(Math.max(limit || 50, 1), 100);
-    const rows = await this.conversations
-      .find({ 'members.user': new Types.ObjectId(viewer.id) })
-      .sort({ lastMessageAt: -1 })
-      .limit(200)
-      .exec();
-    const skip = await this.blocks?.restrictedIds(viewer.id);
-    const people = await this.peopleMap(rows, viewer);
+    const [rows, skip] = await Promise.all([
+      this.conversations
+        .find({ 'members.user': new Types.ObjectId(viewer.id) })
+        .select('type name initials tone photo members lastMessage lastMessageSender lastMessageAt preview previewIcon createdBy')
+        .sort({ lastMessageAt: -1 })
+        .limit(200)
+        .exec(),
+      this.blocks?.restrictedIds(viewer.id) ?? Promise.resolve(undefined),
+    ]);
+    const people = await this.peopleViews(rows, viewer);
     const query = q?.trim().toLowerCase();
     const items: ConversationListItem[] = [];
     for (const row of rows) {
@@ -77,7 +79,7 @@ export class ConversationsService {
         const other = row.members.find((m) => !m.leftAt && String(m.user) !== viewer.id);
         if (other && skip.has(String(other.user))) continue;
       }
-      const item = await this.toListItem(viewer, row, mine, people);
+      const item = this.toListItem(viewer, row, mine, people);
       if (query && !`${item.name} ${item.preview}`.toLowerCase().includes(query)) continue;
       items.push(item);
     }
@@ -474,7 +476,7 @@ export class ConversationsService {
     }
   }
 
-  private async peopleMap(rows: ConversationDocument[], viewer: AuthViewer) {
+  private async peopleViews(rows: ConversationDocument[], viewer: AuthViewer) {
     const ids = new Set<string>([viewer.id]);
     for (const row of rows) {
       for (const member of row.members) {
@@ -482,7 +484,8 @@ export class ConversationsService {
       }
     }
     const docs = await this.users.findByIds([...ids]);
-    return new Map(docs.map((doc) => [doc.id, doc]));
+    const views = await this.users.publicUsers(viewer, docs);
+    return new Map(views.map((view) => [view.id, view]));
   }
 
   async assertGroup(conversationId: string) {
@@ -553,10 +556,10 @@ export class ConversationsService {
   }
 
   async groupMembers(viewer: AuthViewer, row: ConversationDocument) {
-    const people = await this.peopleMap([row], viewer);
+    const people = await this.peopleViews([row], viewer);
     const members: ConversationDetail['members'] = [];
     for (const member of this.getActiveMembers(row)) {
-      const peer = await this.peerView(viewer, String(member.user), people);
+      const peer = this.peerView(String(member.user), people);
       members.push({
         id: peer.id,
         name: peer.name,
@@ -577,23 +580,23 @@ export class ConversationsService {
 
   async groupHeadline(viewer: AuthViewer, row: ConversationDocument) {
     const mine = activeMember(row, viewer.id);
-    const people = await this.peopleMap([row], viewer);
+    const people = await this.peopleViews([row], viewer);
     if (!mine) {
       const active = this.getActiveMembers(row);
       return { status: `${active.length} members`, sub: `${active.length} members` };
     }
-    const item = await this.toListItem(viewer, row, mine, people);
+    const item = this.toListItem(viewer, row, mine, people);
     return { status: item.status, sub: item.sub };
   }
 
   async toDetail(viewer: AuthViewer, row: ConversationDocument): Promise<ConversationDetail> {
-    const people = await this.peopleMap([row], viewer);
+    const people = await this.peopleViews([row], viewer);
     const mine = activeMember(row, viewer.id);
     if (!mine) throw new NotFoundException({ error: 'Conversation not found' });
     const members: ConversationDetail['members'] = [];
     for (const member of row.members) {
       if (member.leftAt) continue;
-      const peer = await this.peerView(viewer, String(member.user), people);
+      const peer = this.peerView(String(member.user), people);
       members.push({
         id: peer.id,
         name: peer.name,
@@ -607,19 +610,19 @@ export class ConversationsService {
       });
     }
     return {
-      ...(await this.toListItem(viewer, row, mine, people)),
+      ...this.toListItem(viewer, row, mine, people),
       createdBy: String(row.createdBy),
       members,
       messages: [],
     };
   }
 
-  private async toListItem(
+  private toListItem(
     viewer: AuthViewer,
     row: ConversationDocument,
     mine: ConversationMember,
-    people: Map<string, UserDocument>,
-  ): Promise<ConversationListItem> {
+    people: Map<string, PublicUser>,
+  ): ConversationListItem {
     const active = row.members.filter((m) => !m.leftAt);
     const base = {
       id: row.id,
@@ -639,7 +642,7 @@ export class ConversationsService {
 
     if (row.type === 'direct') {
       const otherId = active.map((m) => String(m.user)).find((id) => id !== viewer.id) ?? viewer.id;
-      const peer = await this.peerView(viewer, otherId, people);
+      const peer = this.peerView(otherId, people);
       const status = peer.presence === 'online' ? 'Online' : peer.presence === 'away' ? 'Away' : 'Offline';
       return {
         ...base,
@@ -656,9 +659,8 @@ export class ConversationsService {
       };
     }
 
-    const online = (
-      await Promise.all(active.map((m) => this.peerView(viewer, String(m.user), people)))
-    ).filter((p) => p.presence === 'online' || p.presence === 'away').length;
+    const online = active.map((m) => this.peerView(String(m.user), people)).filter((p) => p.presence === 'online' || p.presence === 'away')
+      .length;
     return {
       ...base,
       type: 'group',
@@ -674,22 +676,22 @@ export class ConversationsService {
     };
   }
 
-  private async peerView(viewer: AuthViewer, userId: string, people: Map<string, UserDocument>) {
-    const doc = people.get(userId);
-    if (doc) return this.users.publicUser(viewer, doc);
-    return {
-      id: userId,
-      name: 'ChatWave user',
-      username: 'user',
-      initials: 'CW',
-      tone: 'a',
-      photoUrl: null,
-      role: '',
-      location: '',
-      presence: 'offline',
-      lastSeenAt: null,
-      sub: '',
-    } satisfies PublicUser;
+  private peerView(userId: string, people: Map<string, PublicUser>): PublicUser {
+    return (
+      people.get(userId) ?? {
+        id: userId,
+        name: 'ChatWave user',
+        username: 'user',
+        initials: 'CW',
+        tone: 'a',
+        photoUrl: null,
+        role: '',
+        location: '',
+        presence: 'offline',
+        lastSeenAt: null,
+        sub: '',
+      }
+    );
   }
 }
 

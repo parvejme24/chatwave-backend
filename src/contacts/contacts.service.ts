@@ -42,8 +42,10 @@ export class ContactsService {
   ) {}
 
   async list(viewer: AuthViewer, q?: string, presence?: Presence, limit = 200) {
-    const following = await this.followedIds(viewer.id);
-    const people = await this.users.findDiscoverable(viewer, { q, presence, limit });
+    const [following, people] = await Promise.all([
+      this.followedIds(viewer.id),
+      this.users.findDiscoverable(viewer, { q, presence, limit }),
+    ]);
     const directs = await this.conversations.directIdsFor(
       viewer.id,
       people.filter((person) => following.has(person.id)).map((person) => person.id),
@@ -181,8 +183,7 @@ export class ContactsService {
 
   private async toDto(viewer: AuthViewer, person: UserDocument, savedNote: string, conversationId?: string) {
     const profile = await this.users.publicUser(viewer, person);
-    const presence = await this.users.livePresence(person.id);
-    const note = derivedNote(savedNote, profile, presence);
+    const note = derivedNote(savedNote, profile, profile.presence as Presence);
     const chatId = conversationId ?? (await this.conversations.directIdsFor(viewer.id, [person.id])).get(person.id);
     return {
       id: person.id,
@@ -192,7 +193,7 @@ export class ContactsService {
       initials: profile.initials,
       tone: profile.tone,
       photoUrl: profile.photoUrl,
-      presence,
+      presence: profile.presence,
       note,
       sub: `@${profile.username} · ${note}`,
       hrefAudio: callHref('audio', profile.name, person.id),

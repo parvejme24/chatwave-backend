@@ -2,7 +2,7 @@ import { randomInt } from 'crypto';
 import type { Request } from 'express';
 
 export const AUTH_COOKIE = 'cw_session';
-export const BCRYPT_COST = 12;
+export const BCRYPT_COST = 10;
 export const SESSION_TTL = 60 * 60 * 24 * 7;
 export const OTP_TTL = 60 * 10;
 export const OTP_WINDOW = 60 * 15;

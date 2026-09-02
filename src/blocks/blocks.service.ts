@@ -5,6 +5,7 @@ import { isValidObjectId, Model, Types } from 'mongoose';
 
 import { isManagedUserHidden, type AuthViewer } from '../users/users.constants';
 import { UsersService } from '../users/users.service';
+import { RedisService } from '../common/redis/redis.service';
 import { Block, BlockDocument } from './block.schema';
 import {
   CANNOT_BLOCK_SELF,
@@ -35,6 +36,7 @@ export class BlocksService {
   constructor(
     @InjectModel(Block.name) private readonly blocks: Model<BlockDocument>,
     @Inject(forwardRef(() => UsersService)) private readonly users: UsersService,
+    private readonly redis: RedisService,
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -42,21 +44,24 @@ export class BlocksService {
     const rows = await this.blocks.find({ blocker: new Types.ObjectId(viewer.id) }).sort({ createdAt: -1 }).exec();
     const people = await this.users.findByIds(rows.map((row) => String(row.blocked)));
     const byId = new Map(people.map((person) => [person.id, person]));
-    const blocks: BlockDto[] = [];
-    for (const row of rows) {
+    const visible = rows.flatMap((row) => {
       const person = byId.get(String(row.blocked));
-      if (!person || isManagedUserHidden(person)) continue;
-      const profile = await this.users.publicUser(viewer, person);
-      blocks.push({
-        id: person.id,
-        name: profile.name,
-        username: profile.username,
-        initials: profile.initials,
-        tone: profile.tone,
-        photoUrl: profile.photoUrl,
-        blockedAt: (row.createdAt ?? new Date()).toISOString(),
-      });
-    }
+      if (!person || isManagedUserHidden(person)) return [];
+      return [{ person, blockedAt: row.createdAt }];
+    });
+    const profiles = await this.users.publicUsers(
+      viewer,
+      visible.map((item) => item.person),
+    );
+    const blocks: BlockDto[] = profiles.map((profile, index) => ({
+      id: profile.id,
+      name: profile.name,
+      username: profile.username,
+      initials: profile.initials,
+      tone: profile.tone,
+      photoUrl: profile.photoUrl,
+      blockedAt: (visible[index]?.blockedAt ?? new Date()).toISOString(),
+    }));
     return { blocks, total: blocks.length };
   }
 
@@ -73,6 +78,7 @@ export class BlocksService {
     if (existing) return { created: false, block: await this.toDto(viewer, person.id, existing.createdAt) };
     try {
       const row = await this.blocks.create(pair(viewer.id, person.id));
+      await this.bustRestricted(viewer.id, person.id);
       await this.afterBlock(viewer.id, person.id);
       return { created: true, block: await this.toDto(viewer, person.id, row.createdAt) };
     } catch (error) {
@@ -84,7 +90,10 @@ export class BlocksService {
   }
 
   async remove(viewer: AuthViewer, userId: string) {
-    if (isMongoId(userId)) await this.blocks.deleteOne(pair(viewer.id, userId)).exec();
+    if (isMongoId(userId)) {
+      await this.blocks.deleteOne(pair(viewer.id, userId)).exec();
+      await this.bustRestricted(viewer.id, userId);
+    }
     return { ok: true as const };
   }
 
@@ -113,14 +122,26 @@ export class BlocksService {
   async restrictedIds(userId: string) {
     const ids = new Set<string>();
     if (!isMongoId(userId)) return ids;
+    const cached = await this.redis.cacheGet(`blocks:restricted:${userId}`);
+    if (cached) {
+      try {
+        for (const id of JSON.parse(cached) as string[]) ids.add(id);
+        return ids;
+      } catch {
+        /* miss */
+      }
+    }
     const rows = await this.blocks
       .find({ $or: [{ blocker: new Types.ObjectId(userId) }, { blocked: new Types.ObjectId(userId) }] })
+      .select('blocker blocked')
+      .lean()
       .exec();
     for (const row of rows) {
       const blocker = String(row.blocker);
       const blocked = String(row.blocked);
       ids.add(blocker === userId ? blocked : blocker);
     }
+    await this.redis.cacheSet(`blocks:restricted:${userId}`, JSON.stringify([...ids]), 30);
     return ids;
   }
 
@@ -149,6 +170,10 @@ export class BlocksService {
     } catch {
       /* best-effort */
     }
+  }
+
+  private bustRestricted(a: string, b: string) {
+    return this.redis.cacheDel(`blocks:restricted:${a}`, `blocks:restricted:${b}`);
   }
 
   private pick<T>(token: string) {
