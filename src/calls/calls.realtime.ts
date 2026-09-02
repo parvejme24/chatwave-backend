@@ -41,10 +41,17 @@ export class CallsRealtime {
     for (const id of userIds) this.server?.to(room('user', id)).emit('call:missed', payload);
   }
 
-  emitParticipant(callId: string, userId: string, action: 'joined' | 'left') {
+  emitParticipant(callId: string, userId: string, action: 'joined' | 'left', peerUserIds: string[] = []) {
     const payload = { callId, userId, action };
     this.server?.to(callRoom(callId)).emit('call:participant', payload);
     this.server?.to(room('user', userId)).emit('call:participant', payload);
+    // Also ping the other participant(s) on their personal room in case they
+    // have not joined the call socket room yet.
+    for (const peerId of peerUserIds) {
+      if (peerId && peerId !== userId) {
+        this.server?.to(room('user', peerId)).emit('call:participant', payload);
+      }
+    }
   }
 
   private fanout(conversationId: string, userIds: string[], callId: string, event: string, payload: object) {

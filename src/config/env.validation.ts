@@ -59,7 +59,7 @@ const schema = Joi.object({
   TURN_URL: Joi.string().allow('').default(''),
   TURN_USERNAME: Joi.string().allow('').default(''),
   TURN_CREDENTIAL: Joi.string().allow('').default(''),
-  CALL_RING_TIMEOUT_MS: Joi.number().integer().min(5000).max(120000).default(35000),
+  CALL_RING_TIMEOUT_MS: Joi.number().integer().min(5000).max(180000).default(90000),
 });
 
 function stripTrailingSlash(value: unknown): unknown {

@@ -148,7 +148,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     await row.save();
     await this.redis.clearCallRing(row.id);
     this.realtime.emitAccepted(String(row.conversation), ids(row), { callId: row.id, userId: viewer.id });
-    this.realtime.emitParticipant(row.id, viewer.id, 'joined');
+    this.realtime.emitParticipant(row.id, viewer.id, 'joined', ids(row));
     return { call: await this.toDto(viewer, row), iceServers: this.iceServers() };
   }
 
@@ -258,7 +258,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       mine.joinedAt = new Date();
       await row.save();
     }
-    return row;
+    return { row, participantIds: ids(row) };
   }
 
   private async busy(userIds: string[]) {

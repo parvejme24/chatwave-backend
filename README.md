@@ -291,7 +291,7 @@ curl -s -b cookies.txt -X POST http://localhost:5000/api/calls \
   -d '{"conversationId":"CONVERSATION_ID","type":"video"}'
 ```
 
-Group create requires **3 other people**. Calls: one ringing/active call per user (`409 Already in a call`). Ring timeout `CALL_RING_TIMEOUT_MS` (default 35s) → missed.
+Group create requires **3 other people**. Calls: one ringing/active call per user (`409 Already in a call`). Ring timeout `CALL_RING_TIMEOUT_MS` (default 90s) → missed.
 
 </details>
 

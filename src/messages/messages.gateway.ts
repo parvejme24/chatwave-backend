@@ -75,7 +75,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, Re
   emitNew(conversationId: string, message: CanonicalMessage, members: Preview[]) {
     this.server.to(room('conversation', conversationId)).emit('message:new', { message });
     for (const { userId, ...preview } of members) {
+      // Preview keeps the sidebar live for members who are not in the open thread.
       this.server.to(room('user', userId)).emit('conversation:preview', preview);
+      // Also fan message:new to the user room so clients can bump the list/thread
+      // without joining conversation:{id} first. Upsert dedupes if already received.
+      this.server.to(room('user', userId)).emit('message:new', { message });
     }
   }
 

@@ -42,8 +42,8 @@ export class CallsGateway implements OnGatewayInit, OnGatewayDisconnect {
     const err = await this.guard(socket, callId);
     if (err) return err;
     await socket.join(callRoom(callId));
-    await this.calls.markJoined(callId, socket.data.userId!);
-    this.live.emitParticipant(callId, socket.data.userId!, 'joined');
+    const { participantIds } = await this.calls.markJoined(callId, socket.data.userId!);
+    this.live.emitParticipant(callId, socket.data.userId!, 'joined', participantIds);
     return { ok: true, callId };
   }
 
@@ -54,11 +54,9 @@ export class CallsGateway implements OnGatewayInit, OnGatewayDisconnect {
     if (callId && userId) {
       await socket.leave(callRoom(callId));
       this.live.emitParticipant(callId, userId, 'left');
-      try {
-        await this.calls.end({ id: userId, isOwner: Boolean(socket.data.isOwner) }, callId);
-      } catch {
-        // Call already finished or unknown; the other person still got call:participant.
-      }
+      // Leaving the socket room must NOT hang up the call. Hang-up is only via
+      // HTTP POST /end (or disconnect cleanup) so a brief reconnect / remount
+      // cannot kill an active call right after accept.
     }
     return { ok: true };
   }
@@ -78,6 +76,11 @@ export class CallsGateway implements OnGatewayInit, OnGatewayDisconnect {
     return this.signal(socket, body, 'webrtc:ice');
   }
 
+  @SubscribeMessage('webrtc:ready')
+  ready(@ConnectedSocket() socket: ChatSocket, @MessageBody() body: unknown) {
+    return this.signal(socket, body, 'webrtc:ready');
+  }
+
   @SubscribeMessage('call:media')
   async media(@ConnectedSocket() socket: ChatSocket, @MessageBody() body: unknown) {
     const callId = str(body, 'callId');
@@ -92,7 +95,11 @@ export class CallsGateway implements OnGatewayInit, OnGatewayDisconnect {
     return { ok: true };
   }
 
-  private async signal(socket: ChatSocket, body: unknown, event: 'webrtc:offer' | 'webrtc:answer' | 'webrtc:ice') {
+  private async signal(
+    socket: ChatSocket,
+    body: unknown,
+    event: 'webrtc:offer' | 'webrtc:answer' | 'webrtc:ice' | 'webrtc:ready',
+  ) {
     const callId = str(body, 'callId');
     const toUserId = str(body, 'toUserId');
     const err = await this.guard(socket, callId);
@@ -102,9 +109,14 @@ export class CallsGateway implements OnGatewayInit, OnGatewayDisconnect {
       callId,
       fromUserId: socket.data.userId,
       toUserId,
-      ...(event === 'webrtc:ice' ? { candidate: val(body, 'candidate') } : { sdp: val(body, 'sdp') }),
+      ...(event === 'webrtc:ice'
+        ? { candidate: val(body, 'candidate') }
+        : event === 'webrtc:ready'
+          ? {}
+          : { sdp: val(body, 'sdp') }),
     };
     this.server.to(room('user', toUserId)).emit(event, payload);
+    // Also fan out on the call room so signaling still works if toUserId is stale.
     this.server.to(callRoom(callId)).except(socket.id).emit(event, payload);
     return { ok: true };
   }
