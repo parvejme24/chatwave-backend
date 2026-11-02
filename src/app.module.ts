@@ -7,6 +7,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { KeepAliveJob } from './keep-alive.job';
 import { CloudinaryModule } from './common/cloudinary/cloudinary.module';
 import { MailModule } from './common/mail/mail.module';
 import { RedisModule } from './common/redis/redis.module';
@@ -61,6 +62,6 @@ import { NotificationsModule } from './notifications/notifications.module';
     AuthModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, KeepAliveJob],
 })
 export class AppModule {}
